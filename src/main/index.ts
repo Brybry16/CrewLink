@@ -1,9 +1,9 @@
 'use strict'
 
-import { autoUpdater } from 'electron-updater';
+//import { autoUpdater } from 'electron-updater';
 import { app, BrowserWindow, ipcMain } from 'electron';
-import * as path from 'path'
-import { format as formatUrl } from 'url'
+//import * as path from 'path'
+//import { format as formatUrl } from 'url'
 import './hook';
 
 const isDevelopment = process.env.NODE_ENV !== 'production'
@@ -18,7 +18,7 @@ if (!gotTheLock) {
 	app.quit();
 } else {
 	// app.disableHardwareAcceleration();
-	autoUpdater.checkForUpdatesAndNotify();
+	//autoUpdater.checkForUpdatesAndNotify();
 	app.on('second-instance', (event, commandLine, workingDirectory) => {
 		// Someone tried to run a second instance, we should focus our window.
 		if (mainWindow) {
@@ -33,6 +33,10 @@ if (!gotTheLock) {
 			width: 250,
 			height: 350,
 			resizable: false,
+			/*minWidth:250,
+			maxWidth: 250,
+			minHeight: 350,
+			resizable: true,*/
 			frame: false,
 			fullscreenable: false,
 			maximizable: false,
@@ -48,7 +52,7 @@ if (!gotTheLock) {
 			window.webContents.openDevTools()
 		}
 
-		if (isDevelopment) {
+		/*if (isDevelopment) {
 			window.loadURL(`http://localhost:${process.env.ELECTRON_WEBPACK_WDS_PORT}?version=${autoUpdater.currentVersion.version}`)
 		}
 		else {
@@ -60,7 +64,7 @@ if (!gotTheLock) {
 				},
 				slashes: true
 			}))
-		}
+		}*/
 
 		window.on('closed', () => {
 			mainWindow = null
