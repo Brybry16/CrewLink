@@ -72,7 +72,8 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 	if (isNaN(panPos[1])) panPos[1] = 999;
 	panPos[0] = Math.min(999, Math.max(-999, panPos[0]));
 	panPos[1] = Math.min(999, Math.max(-999, panPos[1]));
-	if (other.inVent) {
+	//if (other.inVent) {
+	if ((!me.isImpostor || !me.inVent) && other.inVent) {
 		gain.gain.value = 0;
 		return;
 	}
@@ -388,6 +389,24 @@ export default function Voice() {
 			connectionStuff.current.socket.emit('id', myPlayer.id);
 		}
 	}, [myPlayer?.id]);
+
+	const otherPlayersSorted = JSON.parse(JSON.stringify(otherPlayers));
+	otherPlayersSorted.sort((p1: Player, p2: Player) => {
+		let p1Connected = Object.values(socketPlayerIds).includes(p1.id), p2Connected = Object.values(socketPlayerIds).includes(p2.id);
+		if(!p1Connected || !p2Connected) {
+			return p1Connected ? -1 : 1;
+		}
+		let p1Dead = otherDead[p1.id], p2Dead = otherDead[p2.id]
+		if(p1Dead || p2Dead) {
+			return p1Dead && myPlayer && myPlayer.id !== undefined && !myPlayer.isDead ? 1 : -1;
+		}
+		let p1Talking = otherTalking[p1.id], p2Talking = otherTalking[p2.id]
+		if(p1Talking || p2Talking) {
+			return p1Talking ? -1 : 1;
+		}
+		return 0;
+	});
+
 	return (
 		<div className="root">
 			<div className="top">
@@ -413,7 +432,7 @@ export default function Voice() {
 			<hr />
 			<div className="otherplayers">
 				{
-					otherPlayers.map(player => {
+					otherPlayersSorted.map((player: Player) => {
 						let connected = Object.values(socketPlayerIds).includes(player.id);
 						return (
 							<Avatar key={player.id} player={player}
