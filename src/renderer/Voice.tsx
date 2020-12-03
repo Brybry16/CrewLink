@@ -33,8 +33,11 @@ interface ConnectionStuff {
 	socket: typeof Socket;
 	stream: MediaStream;
 	pushToTalk: boolean;
+	pressingPushToTalk: boolean;
 	deafened: boolean;
 	muted: boolean;
+	deadDeafened: boolean;
+	livingDeafened: boolean;
 }
 
 interface OtherTalking {
@@ -121,6 +124,8 @@ export default function Voice() {
 
 	const [deafenedState, setDeafened] = useState(false);
 	const [mutedState, setMuted] = useState(false);
+	const [deadDeafenedState, setDeadDeafened] = useState(false);
+	const [livingDeafenedState, setLivingDeafened] = useState(false);
 	const [connected, setConnected] = useState(false);
 
 	useEffect(() => {
@@ -148,7 +153,7 @@ export default function Voice() {
 	}, [gameState.gameState]);
 
 	// const [audioContext] = useState<AudioContext>(() => new AudioContext());
-	const connectionStuff = useRef<ConnectionStuff>({ pushToTalk: settings.pushToTalk, deafened: false, muted: false } as any);
+	const connectionStuff = useRef<ConnectionStuff>({ pushToTalk: settings.pushToTalk, deafened: false, muted: false, deadDeafened: false, livingDeafened: false } as any);
 	useEffect(() => {
 		// Connect to voice relay server
 		connectionStuff.current.socket = io(`ws://${settings.serverIP}`, { transports: ['websocket'] });
@@ -175,21 +180,70 @@ export default function Voice() {
 
 			stream.getAudioTracks()[0].enabled = !settings.pushToTalk;
 
+			//function setMute(pressing: boolean = false) {
+			function setMute(source: number) {
+				if (!myPlayer?.isDead) {
+					connectionStuff.current.deadDeafened = false;
+					connectionStuff.current.livingDeafened = false;
+				}
+
+				if (!connectionStuff.current.deafened && connectionStuff.current.deadDeafened && connectionStuff.current.livingDeafened || // if both living and dead are deafened, switch to full deafen
+				connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened) && source == 1) { // if dead or living are deafened and full deafen is pressed, remove other deafens
+					connectionStuff.current.deafened = true;
+					connectionStuff.current.deadDeafened = false;
+					connectionStuff.current.livingDeafened = false;
+				}
+				else if (connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened)) { // if full deafened and dead or living deafen are pressed, exit full deafen and deafen living or dead respectively
+					connectionStuff.current.deafened = false;
+					connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
+					connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
+				}
+
+				if (settings.pushToTalk) {
+					//stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && pressing;
+					stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && connectionStuff.current.pressingPushToTalk;
+				}
+				else {
+					stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && !connectionStuff.current.muted;
+				}
+
+				setDeafened(connectionStuff.current.deafened);
+				setMuted(connectionStuff.current.muted);
+				setDeadDeafened(connectionStuff.current.deadDeafened);
+				setLivingDeafened(connectionStuff.current.livingDeafened);
+			}
+
+			setMute(0);
+
 			ipcRenderer.on('toggleDeafen', () => {
 				connectionStuff.current.deafened = !connectionStuff.current.deafened;
-				stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && !connectionStuff.current.muted;
-				setDeafened(connectionStuff.current.deafened);
+				setMute(1);
 			});
 			ipcRenderer.on('toggleMute', () => {
 				connectionStuff.current.muted = !connectionStuff.current.muted;
-				stream.getAudioTracks()[0].enabled = !connectionStuff.current.muted && !connectionStuff.current.deafened;
-				setMuted(connectionStuff.current.muted);
+				setMute(2);
+			});
+			ipcRenderer.on('toggleDeafenDead', () => {
+				if (!myPlayer?.isDead) {
+					return;
+				}
+				connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
+				setMute(3);
+			});
+			ipcRenderer.on('toggleDeafenLiving', () => {
+				if (!myPlayer?.isDead) {
+					return;
+				}
+				connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
+				setMute(4);
 			});
 			ipcRenderer.on('pushToTalk', (_: any, pressing: boolean) => {
-				if (!connectionStuff.current.pushToTalk) return;
+				/*if (!connectionStuff.current.pushToTalk) return;
 				if (!connectionStuff.current.deafened) {
 					stream.getAudioTracks()[0].enabled = pressing;
-				}
+				}*/
+				connectionStuff.current.pressingPushToTalk = pressing;
+				setMute(5);
 				// console.log(stream.getAudioTracks()[0].enabled);
 			});
 
@@ -363,7 +417,7 @@ export default function Voice() {
 			const audio = audioElements.current[playerSocketIds[player.id]];
 			if (audio) {
 				calculateVoiceAudio(gameState, settingsRef.current, myPlayer!, player, audio.gain, audio.pan);
-				if (connectionStuff.current.deafened) {
+				if (connectionStuff.current.deafened || myPlayer?.isDead && (otherDead[player.id] && connectionStuff.current.deadDeafened || !otherDead[player.id] && connectionStuff.current.livingDeafened)) {
 					audio.gain.gain.value = 0;
 				}
 			}
@@ -385,7 +439,7 @@ export default function Voice() {
 	}, [gameState.gameState]);
 
 	useEffect(() => {
-		if (connectionStuff.current.socket && myPlayer && myPlayer.id !== undefined) {
+		if (connectionStuff.current.socket && myPlayer?.id !== undefined) {
 			connectionStuff.current.socket.emit('id', myPlayer.id);
 		}
 	}, [myPlayer?.id]);
@@ -398,7 +452,7 @@ export default function Voice() {
 		}
 		let p1Dead = otherDead[p1.id], p2Dead = otherDead[p2.id]
 		if(p1Dead || p2Dead) {
-			return p1Dead && myPlayer && myPlayer.id !== undefined && !myPlayer.isDead ? 1 : -1;
+			return p1Dead && !myPlayer?.isDead ? 1 : -1;
 		}
 		let p1Talking = otherTalking[p1.id], p2Talking = otherTalking[p2.id]
 		if(p1Talking || p2Talking) {
@@ -411,7 +465,7 @@ export default function Voice() {
 		<div className="root">
 			<div className="top">
 				{myPlayer &&
-					<Avatar deafened={deafenedState} muted={mutedState} player={myPlayer} borderColor={connected ? '#2ecc71' : '#c0392b'} talking={talking} isAlive={!myPlayer.isDead} size={100} />
+					<Avatar deafened={deafenedState} muted={mutedState} deadDeafened={deadDeafenedState} livingDeafened={livingDeafenedState} player={myPlayer} borderColor={connected ? '#2ecc71' : '#c0392b'} talking={talking} isAlive={!myPlayer.isDead} size={100} />
 					// <div className="avatar" style={{ borderColor: talking ? '#2ecc71' : 'transparent' }}>
 					// 	<Canvas src={alive} color={playerColors[myPlayer.colorId][0]} shadow={playerColors[myPlayer.colorId][1]} />
 					// </div>

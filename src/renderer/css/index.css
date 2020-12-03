@@ -47,6 +47,14 @@ body {
 	padding: 2px;
 }
 
+.avatar>#deafenDead {
+	background: #c7209d;
+}
+
+.avatar>#deafenLiving {
+	background: #31af11;
+}
+
 .username {
 	display: block;
 	text-align: center;

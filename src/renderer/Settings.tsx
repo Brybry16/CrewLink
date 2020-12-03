@@ -39,6 +39,14 @@ const store = new Store<ISettings>({
 			type: 'string',
 			default: 'RAlt'
 		},
+		deafenDeadShortcut: {
+			type: 'string',
+			default: 'F1'
+		},
+		deafenLivingShortcut: {
+			type: 'string',
+			default: 'F2'
+		},
 		offsets: {
 			type: 'object',
 			properties: {
@@ -81,6 +89,8 @@ export interface ISettings {
 	pushToTalkShortcut: string;
 	deafenShortcut: string;
 	muteShortcut: string;
+	deafenDeadShortcut: string;
+	deafenLivingShortcut: string;
 	offsets: {
 		version: string;
 		data: string;
@@ -248,6 +258,14 @@ export default function Settings({ open, onClose }: SettingsProps) {
 			<div className="form-control l m" style={{ color: '#2ecc71' }}>
 				<label>Deafen Shortcut</label>
 				<input spellCheck={false} type="text" value={settings.deafenShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenShortcut')} />
+			</div>
+			<div className="form-control l m" style={{ color: '#2ecc71' }}>
+				<label>Deafen Dead Shortcut</label>
+				<input spellCheck={false} type="text" value={settings.deafenDeadShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenDeadShortcut')} />
+			</div>
+			<div className="form-control l m" style={{ color: '#2ecc71' }}>
+				<label>Deafen Living Shortcut</label>
+				<input spellCheck={false} type="text" value={settings.deafenLivingShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenLivingShortcut')} />
 			</div>
 			<div className="form-control l m" style={{ color: '#3498db' }}>
 				<label>Voice Server</label>

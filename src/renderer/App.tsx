@@ -35,6 +35,8 @@ function App() {
 		pushToTalkShortcut: 'V',
 		deafenShortcut: 'RControl',
 		muteShortcut: 'RAlt',
+		deafenDeadShortcut: 'F1',
+		deafenLivingShortcut: 'F2',
 		offsets: {
 			version: '',
 			data: ''
@@ -81,7 +83,7 @@ function App() {
 			break;
 	}
 
-	let backgroundClass = settings[0].transparentWindow && gameState.gameState != undefined && gameState.gameState != GameState.UNKNOWN && gameState.gameState != GameState.MENU ? "background-transparent" : "background";
+	let backgroundClass = settings[0].transparentWindow && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU ? "background-transparent" : "background";
 
 	return (
 		<GameStateContext.Provider value={gameState}>

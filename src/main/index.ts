@@ -27,7 +27,6 @@ if (!gotTheLock) {
 		}
 	})
 
-
 	function createMainWindow() {
 		const window = new BrowserWindow({
 			width: 250,
