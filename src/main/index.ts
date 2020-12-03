@@ -1,9 +1,9 @@
 'use strict'
 
-//import { autoUpdater } from 'electron-updater';
+import { autoUpdater } from 'electron-updater';
 import { app, BrowserWindow, ipcMain } from 'electron';
-//import * as path from 'path'
-//import { format as formatUrl } from 'url'
+import * as path from 'path'
+import { format as formatUrl } from 'url'
 import './hook';
 
 const isDevelopment = process.env.NODE_ENV !== 'production'
@@ -52,7 +52,7 @@ if (!gotTheLock) {
 			window.webContents.openDevTools()
 		}
 
-		/*if (isDevelopment) {
+		if (isDevelopment) {
 			window.loadURL(`http://localhost:${process.env.ELECTRON_WEBPACK_WDS_PORT}?version=${autoUpdater.currentVersion.version}`)
 		}
 		else {
@@ -64,7 +64,7 @@ if (!gotTheLock) {
 				},
 				slashes: true
 			}))
-		}*/
+		}
 
 		window.on('closed', () => {
 			mainWindow = null
