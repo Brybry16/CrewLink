@@ -180,8 +180,8 @@ export default function Voice() {
 
 			stream.getAudioTracks()[0].enabled = !settings.pushToTalk;
 
-			//function setMute(pressing: boolean = false) {
-			function setMute(source: number) {
+			//function checkMicMute(pressing: boolean = false) {
+			function checkMicMute(source: number) {
 				if (!myPlayer?.isDead) {
 					connectionStuff.current.deadDeafened = false;
 					connectionStuff.current.livingDeafened = false;
@@ -213,29 +213,29 @@ export default function Voice() {
 				setLivingDeafened(connectionStuff.current.livingDeafened);
 			}
 
-			setMute(0);
+			checkMicMute(0);
 
 			ipcRenderer.on('toggleDeafen', () => {
 				connectionStuff.current.deafened = !connectionStuff.current.deafened;
-				setMute(1);
+				checkMicMute(1);
 			});
 			ipcRenderer.on('toggleMute', () => {
 				connectionStuff.current.muted = !connectionStuff.current.muted;
-				setMute(2);
+				checkMicMute(2);
 			});
 			ipcRenderer.on('toggleDeafenDead', () => {
 				if (!myPlayer?.isDead) {
 					return;
 				}
 				connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
-				setMute(3);
+				checkMicMute(3);
 			});
 			ipcRenderer.on('toggleDeafenLiving', () => {
 				if (!myPlayer?.isDead) {
 					return;
 				}
 				connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
-				setMute(4);
+				checkMicMute(4);
 			});
 			ipcRenderer.on('pushToTalk', (_: any, pressing: boolean) => {
 				/*if (!connectionStuff.current.pushToTalk) return;
@@ -243,8 +243,11 @@ export default function Voice() {
 					stream.getAudioTracks()[0].enabled = pressing;
 				}*/
 				connectionStuff.current.pressingPushToTalk = pressing;
-				setMute(5);
+				checkMicMute(5);
 				// console.log(stream.getAudioTracks()[0].enabled);
+			});
+			ipcRenderer.on('gameState', () => {
+				checkMicMute(6);
 			});
 
 			const ac = new AudioContext();
