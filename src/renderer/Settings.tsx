@@ -1,5 +1,6 @@
+import { remote } from 'electron';
 import Store from 'electron-store';
-import React, { useContext, useEffect, useReducer, useState } from "react";
+import React, { useContext, useEffect, useReducer, useRef, useState } from "react";
 import { SettingsContext } from "./App";
 import './css/settings.css';
 
@@ -23,9 +24,13 @@ const store = new Store<ISettings>({
 			type: 'boolean',
 			default: false,
 		},
-		serverIP: {
+		microphoneGain: {
+			type: 'number',
+			default: 1
+		},
+		server: {
 			type: 'string',
-			default: '54.193.94.35:9736'
+			default: 'https://crewlink.paulf.me'
 		},
 		pushToTalkShortcut: {
 			type: 'string',
@@ -64,7 +69,7 @@ const store = new Store<ISettings>({
 			type: 'boolean',
 			default: false
 		},
-		stereoInLobby: {
+		stereo: {
 			type: 'boolean',
 			default: true
 		},
@@ -83,9 +88,10 @@ export interface SettingsProps {
 export interface ISettings {
 	alwaysOnTop: boolean;
 	microphone: string;
+	microphoneGain: number,
 	speaker: string;
 	pushToTalk: boolean;
-	serverIP: string;
+	server: string;
 	pushToTalkShortcut: string;
 	deafenShortcut: string;
 	muteShortcut: string;
@@ -96,7 +102,7 @@ export interface ISettings {
 		data: string;
 	},
 	hideCode: boolean;
-	stereoInLobby: boolean;
+	stereo: boolean;
 	transparentWindow: boolean;
 }
 export const settingsReducer = (state: ISettings, action: {
@@ -131,7 +137,7 @@ export default function Settings({ open, onClose }: SettingsProps) {
 
 	useEffect(() => {
 		setUnsavedCount(s => s + 1);
-	}, [settings.microphone, settings.speaker, settings.serverIP]);
+	}, [settings.microphone, settings.speaker, settings.server]);
 
 	const [devices, setDevices] = useState<MediaDevice[]>([]);
 	const [_, updateDevices] = useReducer((state) => state + 1, 0);
@@ -175,6 +181,53 @@ export default function Settings({ open, onClose }: SettingsProps) {
 		}
 	};
 
+	const micFader = useRef<HTMLInputElement>(null);
+	const [ micGainNode, setMicGainNode ] = useState<GainNode>();
+	useEffect(() => {
+		if (micGainNode) {
+			micGainNode.gain.value = settings.microphoneGain;
+		}
+	}, [ settings.microphoneGain ]);
+	useEffect(() => {
+		if (!open) return;
+		let monitorNode: AudioNode;
+		let gainNode: AudioNode;
+		let audio: boolean | MediaTrackConstraints = true;
+		if (settings.microphone.toLowerCase() !== 'default')
+			audio = { deviceId: settings.microphone };
+		let media: MediaStream | undefined = undefined;
+		navigator.getUserMedia({ video: false, audio }, async (stream) => {
+			media = stream;
+			const ac = new AudioContext();
+			const source = ac.createMediaStreamSource(stream);
+			const gain = ac.createGain();
+			gain.gain.value = settings.microphoneGain;
+			source.connect(gain);
+			const monitor = ac.createScriptProcessor(1024, 1, 1);
+			let peak = 0;
+			monitor.onaudioprocess = e => {
+				const data = e.inputBuffer.getChannelData(0);
+				if (peak) peak -= 0.04;
+				for (let i = 0; i < data.length; i++) {
+					peak = Math.max(peak, Math.abs(data[i]));
+				}
+				micFader.current?.style.setProperty('--audio-level', (100 * peak / (+micFader.current?.max) | 0) + '%');
+			};
+			gain.connect(monitor);
+			monitor.connect(ac.destination);
+			monitorNode = monitor;
+			setMicGainNode(gain);
+		}, error => {
+			console.log(error);
+			remote.dialog.showErrorBox('Error', 'Couldn\'t connect to your microphone:\n' + error);
+		});
+		return () => {
+			gainNode?.disconnect();
+			monitorNode?.disconnect();
+			media?.getTracks().forEach(t => t.stop());
+		};
+	}, [ open, settings.microphone ]);
+
 	const microphones = devices.filter(d => d.kind === 'audioinput');
 	const speakers = devices.filter(d => d.kind === 'audiooutput');
 
@@ -203,6 +256,15 @@ export default function Settings({ open, onClose }: SettingsProps) {
 
 			<div className="form-control m l" style={{ color: '#e74c3c' }}>
 				<label>Microphone</label>
+				<div className="fader-holder">
+					<input ref={micFader} className="fader" type="range" min="0" max="2" step="0.05" list="volsettings" value={settings.microphoneGain} onChange={(ev) => setSettings({
+						type: 'setOne',
+						action: ['microphoneGain', +ev.currentTarget.value]
+					})} />
+					<datalist id="volsettings">
+						<option>1</option>
+					</datalist>
+				</div>
 				<select value={settings.microphone} onChange={(ev) => {
 					setSettings({
 						type: 'setOne',
@@ -225,24 +287,24 @@ export default function Settings({ open, onClose }: SettingsProps) {
 					});
 				}} onClick={() => updateDevices()}>
 					{
-						speakers.map(d => (
+						speakers.map(d => 
 							<option key={d.id} value={d.id}>{d.label}</option>
-						))
+						)
 					}
 				</select>
 			</div>
-			<div className="form-control" style={{ color: '#f1c40f' }} onClick={() => setSettings({
+			<div className="form-control m" style={{ color: '#f1c40f' }} onClick={() => setSettings({
 				type: 'setOne',
 				action: ['pushToTalk', false]
 			})}>
-				<input type="checkbox" checked={!settings.pushToTalk} style={{ color: '#f1c40f' }} readOnly />
+				<input type="radio" checked={!settings.pushToTalk} style={{ color: '#f1c40f' }} readOnly />
 				<label>Voice Activity</label>
 			</div>
 			<div className={`form-control${settings.pushToTalk ? '' : ' m'}`} style={{ color: '#f1c40f' }} onClick={() => setSettings({
 				type: 'setOne',
 				action: ['pushToTalk', true]
 			})}>
-				<input type="checkbox" checked={settings.pushToTalk} readOnly />
+				<input type="radio" checked={settings.pushToTalk} readOnly />
 				<label>Push to Talk</label>
 			</div>
 			{settings.pushToTalk &&
@@ -271,8 +333,8 @@ export default function Settings({ open, onClose }: SettingsProps) {
 				<label>Voice Server</label>
 				<input spellCheck={false} type="text" onChange={(ev) => setSettings({
 					type: 'setOne',
-					action: ['serverIP', ev.target.value]
-				})} value={settings.serverIP} />
+					action: ['server', ev.target.value]
+				})} value={settings.server} />
 			</div>
 			<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => setSettings({
 				type: 'setOne',
@@ -283,10 +345,10 @@ export default function Settings({ open, onClose }: SettingsProps) {
 			</div>
 			<div className="form-control m" style={{ color: '#fd79a8' }} onClick={() => setSettings({
 				type: 'setOne',
-				action: ['stereoInLobby', !settings.stereoInLobby]
+				action: ['stereo', !settings.stereo]
 			})}>
-				<input type="checkbox" checked={settings.stereoInLobby} style={{ color: '#fd79a8' }} readOnly />
-				<label>Stereo Audio in Lobbies</label>
+				<input type="checkbox" checked={settings.stereo} style={{ color: '#fd79a8' }} readOnly />
+				<label>Stereo Audio</label>
 			</div>
 			<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => setSettings({
 				type: 'setOne',

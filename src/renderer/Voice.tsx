@@ -2,27 +2,25 @@ import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import io, { Socket } from 'socket.io-client';
 import Avatar from './Avatar';
 import { GameStateContext, SettingsContext } from './App';
-import { AmongUsState, GameState, Player } from '../main/GameReader';
+import { AmongUsState, GameState, MapType, Player } from '../main/GameReader';
 import Peer from 'simple-peer';
 import { ipcRenderer, remote } from 'electron';
 import VAD from './vad';
 import { ISettings } from './Settings';
+import * as Maps from './Maps';
 
 interface PeerConnections {
 	[peer: string]: Peer.Instance;
 }
-interface InCall {
-	[peer: string]: boolean;
+interface PeerAudio {
+	element: HTMLAudioElement;
+	gain: GainNode;
+	pan: PannerNode;
+	camsGain: GainNode;
+	muffledGain: GainNode;
 }
 interface AudioElements {
-	[peer: string]: {
-		element: HTMLAudioElement;
-		gain: GainNode;
-		pan: PannerNode;
-	};
-}
-interface AudioListeners {
-	[peer: string]: any;
+	[peer: string]: PeerAudio;
 }
 
 interface SocketIdMap {
@@ -32,6 +30,7 @@ interface SocketIdMap {
 interface ConnectionStuff {
 	socket: typeof Socket;
 	stream: MediaStream;
+	gain: GainNode;
 	pushToTalk: boolean;
 	pressingPushToTalk: boolean;
 	deafened: boolean;
@@ -45,7 +44,7 @@ interface OtherTalking {
 }
 
 interface OtherDead {
-	[playerId: number]: boolean; // isTalking
+	[playerId: number]: boolean; // isDead
 }
 
 // function clamp(number: number, min: number, max: number): number {
@@ -61,53 +60,135 @@ interface OtherDead {
 // 	return clamp((n - oldLow) / (oldHigh - oldLow) * (newHigh - newLow) + newLow, newLow, newHigh);
 // }
 
-function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Player, other: Player, gain: GainNode, pan: PannerNode): void {
-	const audioContext = pan.context;
-	pan.positionZ.setValueAtTime(-0.5, audioContext.currentTime);
-	let panPos = [
-		(other.x - me.x),
-		(other.y - me.y)
-	];
-	if (state.gameState === GameState.DISCUSSION || (state.gameState === GameState.LOBBY && !settings.stereoInLobby)) {
+function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Player, other: Player, audio: PeerAudio): void {
+	const audioContext = audio.pan.context;
+	audio.pan.positionZ.setValueAtTime(-0.5, audioContext.currentTime);
+	let panPos: Array<number>;
+	const dist = distSq(me.x, me.y, other.x, other.y);
+	if (state.gameState === GameState.DISCUSSION || state.gameState === GameState.LOBBY) {
 		panPos = [0, 0];
-	}
-	if (isNaN(panPos[0])) panPos[0] = 999;
-	if (isNaN(panPos[1])) panPos[1] = 999;
-	panPos[0] = Math.min(999, Math.max(-999, panPos[0]));
-	panPos[1] = Math.min(999, Math.max(-999, panPos[1]));
-	//if (other.inVent) {
-	if ((!me.isImpostor || !me.inVent) && other.inVent) {
-		gain.gain.value = 0;
-		return;
-	}
-	if (me.isDead && other.isDead) {
-		gain.gain.value = 1;
-		pan.positionX.setValueAtTime(panPos[0], audioContext.currentTime);
-		pan.positionY.setValueAtTime(panPos[1], audioContext.currentTime);
-		return;
-	}
-	if (!me.isDead && other.isDead) {
-		gain.gain.value = 0;
-		return;
-	}
-	if (state.gameState === GameState.LOBBY || state.gameState === GameState.DISCUSSION) {
-		gain.gain.value = 1;
-		pan.positionX.setValueAtTime(panPos[0], audioContext.currentTime);
-		pan.positionY.setValueAtTime(panPos[1], audioContext.currentTime);
-	} else if (state.gameState === GameState.TASKS) {
-		// const distance = Math.sqrt(Math.pow(me.x - other.x, 2) + Math.pow(me.y - other.y, 2));
-		gain.gain.value = 1;
-		// gain.gain.value = mapNumber(distance, 0, 2.66, 1, 0);
-		pan.positionX.setValueAtTime(panPos[0], audioContext.currentTime);
-		pan.positionY.setValueAtTime(panPos[1], audioContext.currentTime);
 	} else {
-		gain.gain.value = 0;
+		if (settings.stereo) {
+			panPos = [
+				(other.x - me.x),
+				(other.y - me.y)
+			];
+		} else {
+			panPos = [0, Math.sqrt(dist)];
+		}
 	}
-	if (gain.gain.value === 1 && Math.sqrt(Math.pow(me.x - other.x, 2) + Math.pow(me.y - other.y, 2)) > 7) {
-		gain.gain.value = 0;
+	const maxDist = 6 * 6;
+	let g: number;
+	let gCams = 0;
+	if (state.gameState === GameState.LOBBY) {
+		g = 1;
+	} else if (state.gameState === GameState.MENU) {
+		g = 0;
+	//} else if (other.inVent) {
+	} else if ((!me.isImpostor || !me.inVent) && other.inVent) {
+		g = 0;
+	} else if (other.isDead) {
+		g = me.isDead && dist <= maxDist ? 1 : 0;
+	} else if (state.gameState === GameState.DISCUSSION) {
+		g = 1;
+	} else if (state.gameState === GameState.TASKS) {
+		let map = Maps.Empty;
+		switch (state.map) {
+			case MapType.THE_SKELD:
+				map = Maps.TheSkeld;
+				break;
+			case MapType.MIRA_HQ:
+				map = Maps.MiraHq;
+				break;
+			case MapType.POLUS:
+				map = Maps.Polus;
+				break;
+		}
+		if (dist > maxDist) {
+			g = 0;
+		} else if (me.isDead) {
+			g = 1;
+		} /*else if (state.isCommsSabotaged) {
+			g = 0;
+		}*/ else {
+			g = 1 - map.blocked(state, me.x, me.y, other.x, other.y);
+		}
+		if (g < 1 && !state.isCommsSabotaged && state.viewingCameras !== 0) {
+			const r = 3;
+			for (let i = 0; i < map.cameras.length; i++) {
+				if ((state.viewingCameras & (1 << i)) === 0) continue;
+				const cam = map.cameras[i];
+				const dist = distSq(cam[0], cam[1], other.x, other.y);
+				if (dist < r * r) {
+					gCams = 1 - Math.sqrt(dist) / r;
+					break;
+				}
+			}
+		}
+	} else {
+		g = 1;
+	}
+	if (gCams !== 0 && audio.camsGain.gain.value < 1) {
+		audio.camsGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.1);
+	} else if (gCams === 0 && audio.camsGain.gain.value > 0) {
+		audio.camsGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.015);
+	}
+	if (g === 0.5) {
+		audio.muffledGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.015);
+		audio.gain.gain.setTargetAtTime(0, audioContext.currentTime, 0.015);
+	} else {
+		if (audio.muffledGain.gain.value > 0) {
+			audio.muffledGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.015);
+		}
+		audio.gain.gain.setTargetAtTime(g, audioContext.currentTime, 0.015);
+	}
+	if (g > 0) {
+		if (isNaN(panPos[0])) panPos[0] = 999;
+		if (isNaN(panPos[1])) panPos[1] = 999;
+		panPos[0] = Math.min(999, Math.max(-999, panPos[0]));
+		panPos[1] = Math.min(999, Math.max(-999, panPos[1]));
+		audio.pan.positionX.setValueAtTime(panPos[0], audioContext.currentTime);
+		audio.pan.positionY.setValueAtTime(panPos[1], audioContext.currentTime);
 	}
 }
 
+function distSq(x0: number, y0: number, x1: number, y1: number): number {
+	const dx = x0 - x1;
+	const dy = y0 - y1;
+	return dx * dx + dy * dy;
+}
+
+function createSecuritySpeaker(context: AudioContext, destination: AudioNode = context.destination): AudioNode {
+	// https://stackoverflow.com/a/52472603/2782338
+	function createDistortionCurve(amount: number) {
+		const sampleCount = 1024;
+		const curve = new Float32Array(sampleCount);
+		for (let i = 0; i < sampleCount; i++) {
+				const x = 2 * i / sampleCount - 1;
+				curve[i] = (Math.PI + amount) * x / (Math.PI + amount * Math.abs(x));
+		}
+		return curve;
+	} 
+	const highshelf = context.createBiquadFilter();
+	highshelf.type = 'highshelf';
+	highshelf.frequency.value = 1800;
+	highshelf.gain.value = -6;
+	highshelf.Q.value = 1;
+	const highpass = context.createBiquadFilter();
+	highpass.type = 'highpass';
+	highpass.frequency.value = 1000;
+	highpass.Q.value = 1;
+	const distortion = context.createWaveShaper();
+	distortion.curve = createDistortionCurve(3);
+	distortion.oversample = '4x';
+	highpass.connect(distortion);
+	const gain = context.createGain();
+	gain.gain.value = 0.6;
+	distortion.connect(highshelf);
+	highshelf.connect(gain);
+	gain.connect(destination);
+	return highpass;
+}
 
 export default function Voice() {
 	const [settings] = useContext(SettingsContext);
@@ -121,6 +202,24 @@ export default function Voice() {
 	const [otherTalking, setOtherTalking] = useState<OtherTalking>({});
 	const [otherDead, setOtherDead] = useState<OtherDead>({});
 	const audioElements = useRef<AudioElements>({});
+	const audioOut = useMemo<({ctx: AudioContext, dest: AudioNode, cams: AudioNode, muffled: AudioNode })>(() => {
+		const ctx = new AudioContext();
+		const dest = ctx.destination;
+		const compressor = ctx.createDynamicsCompressor();
+		compressor.threshold.value = -10;
+		compressor.ratio.value = 3;
+		compressor.attack.value = 0;
+		compressor.release.value = 0.25;
+		compressor.connect(dest);
+		const cams = createSecuritySpeaker(ctx, compressor);
+		cams.connect(compressor);
+		const muffled = ctx.createBiquadFilter();
+		muffled.type = 'lowpass';
+		muffled.frequency.value = 800;
+		muffled.Q.value = 1;
+		muffled.connect(compressor);
+		return { ctx, dest: compressor, cams, muffled };
+	}, []);
 
 	const [deafenedState, setDeafened] = useState(false);
 	const [mutedState, setMuted] = useState(false);
@@ -152,159 +251,209 @@ export default function Voice() {
 		}
 	}, [gameState.gameState]);
 
-	// const [audioContext] = useState<AudioContext>(() => new AudioContext());
-	const connectionStuff = useRef<ConnectionStuff>({ pushToTalk: settings.pushToTalk, deafened: false, muted: false, deadDeafened: false, livingDeafened: false } as any);
+	// const [audioOut.ctx] = useState<audioOut.ctx>(() => new audioOut.ctx());
+	const connectionStuff = useRef<ConnectionStuff>({ pushToTalk: settings.pushToTalk, deafened: false } as any);
+	useEffect(() => {
+		if (connectionStuff.current.gain) {
+			connectionStuff.current.gain.gain.value = settings.microphoneGain;
+		}
+	}, [ settings.microphoneGain ]);
 	useEffect(() => {
 		// Connect to voice relay server
-		connectionStuff.current.socket = io(`ws://${settings.serverIP}`, { transports: ['websocket'] });
+		let url;
+		try {
+			url = new URL(settings.server);
+		} catch (e) {
+			remote.dialog.showErrorBox('Invalid URL', 'Bad voice server url:\n\n' + settings.server);
+			return;
+		}
+		const socketUri = `${url.protocol === 'https:' ? 'wss' : 'ws'}://${url.host}`;
+		connectionStuff.current.socket = io(socketUri, { transports: ['websocket'] });
 		const { socket } = connectionStuff.current;
 
 		socket.on('connect', () => {
 			setConnected(true);
+			console.log(`connected: ${socketUri}`);
 		});
 		socket.on('disconnect', () => {
 			setConnected(false);
+			console.log('disconnected');
 		});
-
+		
 		// Initialize variables
 		let audioListener: any;
 		let audio: boolean | MediaTrackConstraints = true;
 
-
 		// Get microphone settings
-		if (settings.microphone.toLowerCase() !== 'default')
+		if (settings.microphone.toLowerCase() !== 'default') {
 			audio = { deviceId: settings.microphone };
+		}
 
-		navigator.getUserMedia({ video: false, audio }, async (stream) => {
-			connectionStuff.current.stream = stream;
+		function openMic(successCallback: NavigatorUserMediaSuccessCallback) {
+			navigator.getUserMedia({ video: false, audio }, successCallback, error => {
+				console.error(error);
+				remote.dialog.showErrorBox('Error', 'Couldn\'t connect to your microphone:\n' + error);
+			});
+		}
 
-			stream.getAudioTracks()[0].enabled = !settings.pushToTalk;
-
-			//function checkMicMute(pressing: boolean = false) {
-			function checkMicMute(source: number) {
-				if (!myPlayer?.isDead) {
-					connectionStuff.current.deadDeafened = false;
-					connectionStuff.current.livingDeafened = false;
-				}
-
-				if (!connectionStuff.current.deafened && connectionStuff.current.deadDeafened && connectionStuff.current.livingDeafened || // if both living and dead are deafened, switch to full deafen
-				connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened) && source == 1) { // if dead or living are deafened and full deafen is pressed, remove other deafens
-					connectionStuff.current.deafened = true;
-					connectionStuff.current.deadDeafened = false;
-					connectionStuff.current.livingDeafened = false;
-				}
-				else if (connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened)) { // if full deafened and dead or living deafen are pressed, exit full deafen and deafen living or dead respectively
-					connectionStuff.current.deafened = false;
-					connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
-					connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
-				}
-
-				if (settings.pushToTalk) {
-					//stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && pressing;
-					stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && connectionStuff.current.pressingPushToTalk;
-				}
-				else {
-					stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && !connectionStuff.current.muted;
-				}
-
-				setDeafened(connectionStuff.current.deafened);
-				setMuted(connectionStuff.current.muted);
-				setDeadDeafened(connectionStuff.current.deadDeafened);
-				setLivingDeafened(connectionStuff.current.livingDeafened);
+		//function checkMicMute(pressing: boolean = false) {
+		function checkMicMute(source: number) {
+			if (!myPlayer?.isDead) {
+				connectionStuff.current.deadDeafened = false;
+				connectionStuff.current.livingDeafened = false;
 			}
+
+			if (!connectionStuff.current.deafened && connectionStuff.current.deadDeafened && connectionStuff.current.livingDeafened || // if both living and dead are deafened, switch to full deafen
+			connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened) && source == 1) { // if dead or living are deafened and full deafen is pressed, remove other deafens
+				connectionStuff.current.deafened = true;
+				connectionStuff.current.deadDeafened = false;
+				connectionStuff.current.livingDeafened = false;
+			}
+			else if (connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened)) { // if full deafened and dead or living deafen are pressed, exit full deafen and deafen living or dead respectively
+				connectionStuff.current.deafened = false;
+				connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
+				connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
+			}
+
+			if (!connectionStuff.current.stream) return;
+
+			if (settings.pushToTalk) {
+				//stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && pressing;
+				connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && connectionStuff.current.pressingPushToTalk;
+			}
+			else {
+				connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && !connectionStuff.current.muted;
+			}
+
+			setDeafened(connectionStuff.current.deafened);
+			setMuted(connectionStuff.current.muted);
+			setDeadDeafened(connectionStuff.current.deadDeafened);
+			setLivingDeafened(connectionStuff.current.livingDeafened);
+		}
+
+		const toggleDeafen = () => {
+			connectionStuff.current.deafened = !connectionStuff.current.deafened;
+			checkMicMute(1);
+		};
+
+		const toggleMute = () => {
+			connectionStuff.current.muted = !connectionStuff.current.muted;
+			checkMicMute(2);
+		};
+		const toggleDeafenDead = () => {
+			if (!myPlayer?.isDead) {
+				return;
+			}
+			connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
+			checkMicMute(3);
+		};
+		const toggleDeafenLiving = () => {
+			if (!myPlayer?.isDead) {
+				return;
+			}
+			connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
+			checkMicMute(4);
+		};
+		const pushToTalk = (_: any, pressing: boolean) => {
+			/*if (!connectionStuff.current.pushToTalk) return;
+			if (!connectionStuff.current.deafened) {
+				stream.getAudioTracks()[0].enabled = pressing;
+			}*/
+			connectionStuff.current.pressingPushToTalk = pressing;
+			checkMicMute(5);
+			// console.log(stream.getAudioTracks()[0].enabled);
+		};
+		const gameStateCheckMicMute = () => {
+			checkMicMute(6);
+		};
+
+		ipcRenderer.on('toggleDeafen', toggleDeafen);
+		ipcRenderer.on('toggleMute', toggleMute);
+		ipcRenderer.on('toggleDeafenDead', toggleDeafenDead);
+		ipcRenderer.on('toggleDeafenLiving', toggleDeafenLiving);
+		ipcRenderer.on('pushToTalk', pushToTalk);
+		ipcRenderer.on('gameState', gameStateCheckMicMute);
+
+		openMic(async (stream) => {
+			connectionStuff.current.stream = stream;
+			
+			const peerConnections: PeerConnections = {};
+			audioElements.current = {};
+
+			const audioTrack = stream.getAudioTracks()[0];
+
+			audioTrack.enabled = !settings.pushToTalk;
 
 			checkMicMute(0);
 
-			ipcRenderer.on('toggleDeafen', () => {
-				connectionStuff.current.deafened = !connectionStuff.current.deafened;
-				checkMicMute(1);
-			});
-			ipcRenderer.on('toggleMute', () => {
-				connectionStuff.current.muted = !connectionStuff.current.muted;
-				checkMicMute(2);
-			});
-			ipcRenderer.on('toggleDeafenDead', () => {
-				if (!myPlayer?.isDead) {
-					return;
-				}
-				connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
-				checkMicMute(3);
-			});
-			ipcRenderer.on('toggleDeafenLiving', () => {
-				if (!myPlayer?.isDead) {
-					return;
-				}
-				connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
-				checkMicMute(4);
-			});
-			ipcRenderer.on('pushToTalk', (_: any, pressing: boolean) => {
-				/*if (!connectionStuff.current.pushToTalk) return;
-				if (!connectionStuff.current.deafened) {
-					stream.getAudioTracks()[0].enabled = pressing;
-				}*/
-				connectionStuff.current.pressingPushToTalk = pressing;
-				checkMicMute(5);
-				// console.log(stream.getAudioTracks()[0].enabled);
-			});
-			ipcRenderer.on('gameState', () => {
-				checkMicMute(6);
+			audioTrack.addEventListener('ended', () => {
+				remote.dialog.showMessageBox(remote.getCurrentWindow(),
+					{
+						title: 'Audio Disconnected',
+						message: 'The current audio device was disconnected, choose \'Reload\' once reconnected or switch to different device.',
+						buttons: ['Change settings', 'Reload'],
+						defaultId: 1
+					}
+				)
+				.then(res => {
+					if (res.response === 1) {
+						remote.getCurrentWindow().reload();
+					}
+				});
 			});
 
 			const ac = new AudioContext();
-			ac.createMediaStreamSource(stream)
-			audioListener = VAD(ac, ac.createMediaStreamSource(stream), undefined, {
+			let peerStream: MediaStream;
+			let streamNode: AudioNode;
+			if (true) { // settings.microphoneGain !== 1
+				const gain = ac.createGain();
+				connectionStuff.current.gain = gain;
+				gain.gain.value = settings.microphoneGain;
+				const dest = ac.createMediaStreamDestination();
+				ac.createMediaStreamSource(stream).connect(gain).connect(dest);
+				peerStream = dest.stream;
+				streamNode = gain;
+			} else {
+				peerStream = stream;
+				streamNode = ac.createMediaStreamSource(stream);
+			}
+			audioListener = new VAD(ac, streamNode, undefined, {
 				onVoiceStart: () => setTalking(true),
 				onVoiceStop: () => setTalking(false),
-				// onUpdate: console.log,
 				noiseCaptureDuration: 1,
 			});
 
-			// audioListener = audioActivity(stream, (level) => {
-			// 	setTalking(level > 0.1);
-			// });
-			const peerConnections: PeerConnections = {};
-			const inCall: InCall = {};
-			audioElements.current = {};
-			const audioListeners: AudioListeners = {};
+			function disconnectPeer(peer: string) {
+				const connection = peerConnections[peer];
+				if (!connection) return;
+				connection.destroy();
+				delete peerConnections[peer];
+				if (audioElements.current[peer]) {
+					document.body.removeChild(audioElements.current[peer].element);
+					audioElements.current[peer].pan.disconnect();
+					audioElements.current[peer].gain.disconnect();
+					audioElements.current[peer].camsGain.disconnect();
+					delete audioElements.current[peer];
+				}
+			}
 
 			const connect = (lobbyCode: string, playerId: number) => {
-				console.log("Connect called", lobbyCode, playerId);
 				socket.emit('leave');
 				Object.keys(peerConnections).forEach(k => {
 					disconnectPeer(k);
 				});
 				setSocketPlayerIds({});
-
 				if (lobbyCode === 'MENU') return;
-
-				function disconnectPeer(peer: string) {
-					const connection = peerConnections[peer];
-					if (!connection) return;
-					delete inCall[peer];
-					connection.destroy();
-					delete peerConnections[peer];
-					if (audioElements.current[peer]) {
-						document.body.removeChild(audioElements.current[peer].element);
-						audioElements.current[peer].pan.disconnect();
-						audioElements.current[peer].gain.disconnect();
-						delete audioElements.current[peer];
-					}
-					if (audioListeners[peer]) {
-						audioListeners[peer].destroy();
-					}
-				}
-
 				socket.emit('join', lobbyCode, playerId);
 			};
 			setConnect({ connect });
 			function createPeerConnection(peer: string, initiator: boolean) {
-				// console.log("Opening connection to ", peer, "Initiator: ", initiator);
+				disconnectPeer(peer);
+
 				const connection = new Peer({
-					stream, initiator, config: {
+					stream: peerStream, initiator, config: {
 						iceServers: [
-							{
-								'urls': 'stun:stun.l.google.com:19302'
-							}
+							{ 'urls': ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19305'] },
 						]
 					}
 				});
@@ -317,25 +466,37 @@ export default function Voice() {
 					if (settings.speaker.toLowerCase() !== 'default')
 						(audio as any).setSinkId(settings.speaker);
 
-					const context = new AudioContext();
-					var source = context.createMediaStreamSource(stream);
-					let gain = context.createGain();
-					let pan = context.createPanner();
-					// let compressor = context.createDynamicsCompressor();
+					var source = audioOut.ctx.createMediaStreamSource(stream);
+					let gain = audioOut.ctx.createGain();
+					let pan = audioOut.ctx.createPanner();
 					pan.refDistance = 0.1;
 					pan.panningModel = 'equalpower';
 					pan.distanceModel = 'linear';
-					pan.maxDistance = 2.66 * 2;
+					//pan.maxDistance = 2.66 * 2;
+					pan.maxDistance = 2.4;
 					pan.rolloffFactor = 1;
 
 					source.connect(pan);
 					pan.connect(gain);
-					// Source -> pan -> gain -> VAD -> destination
-					VAD(context, gain, context.destination, {
+					
+					const camsGain = audioOut.ctx.createGain();
+					camsGain.gain.value = 0;
+					source.connect(camsGain);
+					camsGain.connect(audioOut.cams);
+					
+					const muffledGain = audioOut.ctx.createGain();
+					muffledGain.gain.value = 0;
+					pan.connect(muffledGain);
+					muffledGain.connect(audioOut.muffled);
+
+					gain.connect(audioOut.dest);
+					const vad = new VAD(audioOut.ctx, gain, undefined, {
 						onVoiceStart: () => setTalking(true),
-						onVoiceStop: () => setTalking(false),
-						// onUpdate: console.log,
+						onVoiceStop: () => setTalking(false)
 					});
+
+					camsGain.connect(vad.analyser);
+					muffledGain.connect(vad.analyser);
 
 					const setTalking = (talking: boolean) => {
 						setSocketPlayerIds(socketPlayerIds => {
@@ -346,30 +507,23 @@ export default function Voice() {
 							return socketPlayerIds;
 						});
 					};
-					// gain.connect(compressor);
-					// compressor.connect();
-
-					// console.log(pan, audio);
-					// pan.pan.setValueAtTime(-1, audioContext.currentTime);
-					// source.connect(pan);
-					// pan.connect(audioContext.destination);
-					audioElements.current[peer] = { element: audio, gain, pan };
-
-					// audioListeners[peer] = audioActivity(stream, (level) => {
-					// 	setSocketPlayerIds(socketPlayerIds => {
-					// 		setOtherTalking(old => ({
-					// 			...old,
-					// 			[socketPlayerIds[peer]]: level
-					// 		}));
-					// 		return socketPlayerIds;
-					// 	});
-					// });
+					audioElements.current[peer] = { element: audio, gain, pan, camsGain, muffledGain };
 				});
 				connection.on('signal', (data) => {
 					socket.emit('signal', {
 						data,
 						to: peer
 					});
+				});
+				connection.on('error', (error) => {
+					console.log(error);
+					if (initiator) {
+						remote.dialog.showErrorBox('Connection Error', `A voice connection error occurred: ${error.name}\n\n${error.message}`);
+					}
+				});
+				connection.on('close', () => {
+					console.log('Closing peer connection');
+					disconnectPeer(socket.id);
 				});
 				return connection;
 			}
@@ -390,14 +544,17 @@ export default function Voice() {
 				setSocketPlayerIds(ids);
 			});
 
-		}, (error) => {
-			console.error(error);
-			remote.dialog.showErrorBox('Error', 'Couldn\'t connect to your microphone:\n' + error);
 		});
 
 		return () => {
 			connectionStuff.current.socket.close();
 			audioListener.destroy();
+			ipcRenderer.off('toggleDeafen', toggleDeafen);
+			ipcRenderer.off('toggleMute', toggleMute);
+			ipcRenderer.off('toggleDeafenDead', toggleDeafenDead);
+			ipcRenderer.off('toggleDeafenLiving', toggleDeafenLiving);
+			ipcRenderer.off('pushToTalk', pushToTalk);
+			ipcRenderer.off('gameState', gameStateCheckMicMute);
 		}
 	}, []);
 
@@ -419,7 +576,7 @@ export default function Voice() {
 		for (let player of otherPlayers) {
 			const audio = audioElements.current[playerSocketIds[player.id]];
 			if (audio) {
-				calculateVoiceAudio(gameState, settingsRef.current, myPlayer!, player, audio.gain, audio.pan);
+				calculateVoiceAudio(gameState, settingsRef.current, myPlayer!, player, audio);
 				if (connectionStuff.current.deafened || myPlayer?.isDead && (otherDead[player.id] && connectionStuff.current.deadDeafened || !otherDead[player.id] && connectionStuff.current.livingDeafened)) {
 					audio.gain.gain.value = 0;
 				}
@@ -427,7 +584,7 @@ export default function Voice() {
 		}
 
 		return otherPlayers;
-	}, [gameState]);
+	}, [gameState, socketPlayerIds]);
 
 	useEffect(() => {
 		if (connect?.connect && gameState.lobbyCode && myPlayer?.id !== undefined) {
@@ -501,6 +658,7 @@ export default function Voice() {
 					})
 				}
 			</div>
+			<div className="reload-app" onMouseUp={() => remote.getCurrentWindow().reload() }>RELOAD</div>
 		</div>
 	)
 }

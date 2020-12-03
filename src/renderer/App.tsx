@@ -8,8 +8,14 @@ import Settings, { ISettings, settingsReducer } from './Settings';
 
 let appVersion = '';
 if (typeof window !== 'undefined' && window.location) {
-	let query = new URLSearchParams(window.location.search.substring(1));
-	appVersion = (' v' + query.get('version')) || '';
+	let ver;
+	if (process.env.NODE_ENV === 'development') {
+		ver = process.env.npm_package_version;
+	} else {
+		let query = new URLSearchParams(window.location.search.substring(1));
+		ver = query.get('version');
+	}
+	appVersion = ver || '';
 }
 
 
@@ -29,9 +35,10 @@ function App() {
 	const settings = useReducer(settingsReducer, {
 		alwaysOnTop: false,
 		microphone: 'Default',
+		microphoneGain: 1,
 		speaker: 'Default',
 		pushToTalk: false,
-		serverIP: '54.193.94.35:9736',
+		server: 'https://crewlink.paulf.me',
 		pushToTalkShortcut: 'V',
 		deafenShortcut: 'RControl',
 		muteShortcut: 'RAlt',
@@ -42,7 +49,7 @@ function App() {
 			data: ''
 		},
 		hideCode: false,
-		stereoInLobby: true,
+		stereo: true,
 		transparentWindow: false
 	});
 
@@ -82,7 +89,7 @@ function App() {
 			page = <Voice />;
 			break;
 	}
-
+	
 	let backgroundClass = settings[0].transparentWindow && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU ? "background-transparent" : "background";
 
 	return (
@@ -90,7 +97,7 @@ function App() {
 			<SettingsContext.Provider value={settings}>
 				<div className={backgroundClass}>
 					<div className="titlebar">
-						<span className="title">CrewLink{appVersion}</span>
+						<span className="title">CrewLink+ {appVersion}</span>
 						<svg className="titlebar-button settings" onClick={() => setSettingsOpen(!settingsOpen)} enableBackground="new 0 0 24 24" viewBox="0 0 24 24" fill="#868686" width="20px" height="20px">
 							<g>
 								<path d="M0,0h24v24H0V0z" fill="none" />
