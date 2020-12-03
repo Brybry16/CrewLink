@@ -59,6 +59,10 @@ const store = new Store<ISettings>({
 		stereoInLobby: {
 			type: 'boolean',
 			default: true
+		},
+		transparentWindow: {
+			type: 'boolean',
+			default: false
 		}
 	}
 });
@@ -83,6 +87,7 @@ export interface ISettings {
 	},
 	hideCode: boolean;
 	stereoInLobby: boolean;
+	transparentWindow: boolean;
 }
 export const settingsReducer = (state: ISettings, action: {
 	type: 'set' | 'setOne', action: [string, any] | ISettings
@@ -264,6 +269,13 @@ export default function Settings({ open, onClose }: SettingsProps) {
 			})}>
 				<input type="checkbox" checked={settings.stereoInLobby} style={{ color: '#fd79a8' }} readOnly />
 				<label>Stereo Audio in Lobbies</label>
+			</div>
+			<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => setSettings({
+				type: 'setOne',
+				action: ['transparentWindow', !settings.transparentWindow]
+			})}>
+				<input type="checkbox" checked={settings.transparentWindow} style={{ color: '#9b59b6' }} readOnly />
+				<label>Make window background transparent in matches</label>
 			</div>
 		</div>
 	</div>

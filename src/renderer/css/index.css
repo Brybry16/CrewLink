@@ -2,11 +2,19 @@
 @import url('https://fonts.googleapis.com/css2?family=Source+Code+Pro:wght@500&display=swap');
 
 body {
-	background-color: #23272A;
+	/* background-color: #23272A; */
 	color: white;
 	font-family: 'Varela', sans-serif;
 	margin: 0;
 	overflow: hidden;
+}
+
+.background {
+	background-color: #23272A;
+}
+
+.background-transparent {
+	background-color: #23272A00;
 }
 
 #app, .root {
