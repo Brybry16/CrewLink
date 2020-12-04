@@ -1,4 +1,4 @@
-import { remote } from 'electron';
+import { ipcRenderer, remote } from 'electron';
 import Store from 'electron-store';
 import React, { useContext, useEffect, useReducer, useRef, useState } from "react";
 import { SettingsContext } from "./App";
@@ -73,7 +73,7 @@ const store = new Store<ISettings>({
 			type: 'boolean',
 			default: true
 		},
-		transparentWindow: {
+		overlayMode: {
 			type: 'boolean',
 			default: false
 		}
@@ -103,7 +103,7 @@ export interface ISettings {
 	},
 	hideCode: boolean;
 	stereo: boolean;
-	transparentWindow: boolean;
+	overlayMode: boolean;
 }
 export const settingsReducer = (state: ISettings, action: {
 	type: 'set' | 'setOne', action: [string, any] | ISettings
@@ -124,7 +124,6 @@ interface MediaDevice {
 }
 
 export default function Settings({ open, onClose }: SettingsProps) {
-
 	const [settings, setSettings] = useContext(SettingsContext);
 	const [unsavedCount, setUnsavedCount] = useState(0);
 	const unsaved = unsavedCount > 2;
@@ -350,12 +349,15 @@ export default function Settings({ open, onClose }: SettingsProps) {
 				<input type="checkbox" checked={settings.stereo} style={{ color: '#fd79a8' }} readOnly />
 				<label>Stereo Audio</label>
 			</div>
-			<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => setSettings({
-				type: 'setOne',
-				action: ['transparentWindow', !settings.transparentWindow]
-			})}>
-				<input type="checkbox" checked={settings.transparentWindow} style={{ color: '#9b59b6' }} readOnly />
-				<label>Make window background transparent in matches</label>
+			<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => { 
+				ipcRenderer.send('toggleOverlay', !settings.overlayMode);
+				setSettings({
+					type: 'setOne',
+					action: ['overlayMode', !settings.overlayMode]
+				})
+			}}>
+				<input type="checkbox" checked={settings.overlayMode} style={{ color: '#9b59b6' }} readOnly />
+				<label>Overlay mode</label>
 			</div>
 		</div>
 	</div>

@@ -27,10 +27,13 @@ if (!gotTheLock) {
 		}
 	})
 
+	let defaultWidth = /*250*/275/*300*/;
+	let defaultHeight = /*350*/396;
+
 	function createMainWindow() {
 		const window = new BrowserWindow({
-			width: 250,
-			height: 350,
+			width: defaultWidth,
+			height: defaultHeight,
 			resizable: false,
 			/*minWidth:250,
 			maxWidth: 250,
@@ -48,7 +51,7 @@ if (!gotTheLock) {
 		});
 
 		if (isDevelopment) {
-			//window.webContents.openDevTools()
+			window.webContents.openDevTools()
 		}
 
 		if (isDevelopment) {
@@ -114,6 +117,15 @@ if (!gotTheLock) {
 		// event.returnValue = globalShortcut.register(val!, () => {
 		// 	console.log("push-to-talk");
 		// })
+	});
 
+	ipcMain.on('toggleOverlay', (_: any, on: boolean) => {
+		if (mainWindow === null) return;
+		
+		if (on) {
+			mainWindow.setContentSize(defaultWidth, defaultHeight + 241)
+		} else {
+			mainWindow.setContentSize(defaultWidth, defaultHeight)
+		}
 	});
 }

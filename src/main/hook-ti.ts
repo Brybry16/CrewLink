@@ -14,7 +14,7 @@ export const IOffsets = t.iface([], {
   "playerCount": t.array("number"),
   "playerAddrPtr": "number",
   "exiledPlayerId": t.array("number"),
-  //"localPlayerId": t.array("number"),
+  "localPlayerId": t.array("number"),
   "gameCode": t.array("number"),
   "ship": t.array("number"),
   "map": t.array("number"),
@@ -37,7 +37,6 @@ export const IOffsets = t.iface([], {
   "polusSurveillanceDefIndex": "number",
   "polusSurveillanceCurrentCamera": t.array("number"),
   "player": t.iface([], {
-    "isLocal": t.array("number"),
     "localX": t.array("number"),
     "localY": t.array("number"),
     "remoteX": t.array("number"),

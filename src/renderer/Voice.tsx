@@ -8,6 +8,7 @@ import { ipcRenderer, remote } from 'electron';
 import VAD from './vad';
 import { ISettings } from './Settings';
 import * as Maps from './Maps';
+import LobbySettings, { ILobbySettings } from './LobbySettings';
 
 interface PeerConnections {
 	[peer: string]: Peer.Instance;
@@ -192,6 +193,7 @@ function createSecuritySpeaker(context: AudioContext, destination: AudioNode = c
 
 export default function Voice() {
 	const [settings] = useContext(SettingsContext);
+	const [lobbySettings, setLobbySettings] = useState<ILobbySettings>({});
 	const settingsRef = useRef<ISettings>(settings);
 	const gameState = useContext(GameStateContext);
 	let { lobbyCode: displayedLobbyCode } = gameState;
@@ -258,6 +260,7 @@ export default function Voice() {
 			connectionStuff.current.gain.gain.value = settings.microphoneGain;
 		}
 	}, [ settings.microphoneGain ]);
+
 	useEffect(() => {
 		// Connect to voice relay server
 		let url;
@@ -363,8 +366,16 @@ export default function Voice() {
 			checkMicMute(5);
 			// console.log(stream.getAudioTracks()[0].enabled);
 		};
-		const gameStateCheckMicMute = () => {
+
+		let playerCount = gameState?.players?.length;
+		const gameStateUpdate = (_: any, newState: AmongUsState) => {
 			checkMicMute(6);
+
+			if (playerCount !== newState.players.length && newState.lobbyCode !== 'MENU') {
+				playerCount = newState.players.length;
+
+				socket.emit('lobbyPlayerCount', newState.lobbyCode, playerCount);
+			}
 		};
 
 		ipcRenderer.on('toggleDeafen', toggleDeafen);
@@ -372,7 +383,7 @@ export default function Voice() {
 		ipcRenderer.on('toggleDeafenDead', toggleDeafenDead);
 		ipcRenderer.on('toggleDeafenLiving', toggleDeafenLiving);
 		ipcRenderer.on('pushToTalk', pushToTalk);
-		ipcRenderer.on('gameState', gameStateCheckMicMute);
+		ipcRenderer.on('gameState', gameStateUpdate);
 
 		openMic(async (stream) => {
 			connectionStuff.current.stream = stream;
@@ -445,6 +456,7 @@ export default function Voice() {
 				setSocketPlayerIds({});
 				if (lobbyCode === 'MENU') return;
 				socket.emit('join', lobbyCode, playerId);
+				socket.emit('lobbyPlayerCount', lobbyCode, gameState?.players?.length ?? 1);
 			};
 			setConnect({ connect });
 			function createPeerConnection(peer: string, initiator: boolean) {
@@ -543,21 +555,34 @@ export default function Voice() {
 			socket.on('setIds', (ids: SocketIdMap) => {
 				setSocketPlayerIds(ids);
 			});
+			socket.on('lobbySetting', (setting: string, value: any) => {
+				console.log('lobbySetting: ' + setting + ' - ' + value);
 
+				setLobbySettings(old => ({ ...old, [setting]: value }));
+			});
+			socket.on('lobbySettings', (settings: ILobbySettings) => {
+				//console.log('lobbySettings: ' + Object.keys(settings));
+				for (let s of Object.keys(settings)) {
+					console.log('lobbySetting: ' + s + ' - ' + settings[s]);
+				}
+
+				setLobbySettings(settings);
+			});
 		});
 
 		return () => {
 			connectionStuff.current.socket.close();
+
 			audioListener.destroy();
+
 			ipcRenderer.off('toggleDeafen', toggleDeafen);
 			ipcRenderer.off('toggleMute', toggleMute);
 			ipcRenderer.off('toggleDeafenDead', toggleDeafenDead);
 			ipcRenderer.off('toggleDeafenLiving', toggleDeafenLiving);
 			ipcRenderer.off('pushToTalk', pushToTalk);
-			ipcRenderer.off('gameState', gameStateCheckMicMute);
+			ipcRenderer.off('gameState', gameStateUpdate);
 		}
 	}, []);
-
 
 	const myPlayer = useMemo(() => {
 		if (!gameState || !gameState.players) return undefined;
@@ -603,23 +628,32 @@ export default function Voice() {
 			connectionStuff.current.socket.emit('id', myPlayer.id);
 		}
 	}, [myPlayer?.id]);
+	
+	let overlayMode = settings.overlayMode && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU && otherPlayers.length > 0;
 
-	const otherPlayersSorted = JSON.parse(JSON.stringify(otherPlayers));
-	otherPlayersSorted.sort((p1: Player, p2: Player) => {
+	/*const otherPlayersSorted = JSON.parse(JSON.stringify(otherPlayers));
+	otherPlayersSorted*/otherPlayers.sort((p1: Player, p2: Player) => {
 		let p1Connected = Object.values(socketPlayerIds).includes(p1.id), p2Connected = Object.values(socketPlayerIds).includes(p2.id);
-		if(!p1Connected || !p2Connected) {
-			return p1Connected ? -1 : 1;
-		}
+		if(!p1Connected || !p2Connected) return p1Connected ? -1 : 1;
+
 		let p1Dead = otherDead[p1.id], p2Dead = otherDead[p2.id]
-		if(p1Dead || p2Dead) {
-			return p1Dead && !myPlayer?.isDead ? 1 : -1;
-		}
+		if(p1Dead || p2Dead) return p1Dead && !myPlayer?.isDead ? 1 : -1;
+
+		if (overlayMode) return 0;
+
 		let p1Talking = otherTalking[p1.id], p2Talking = otherTalking[p2.id]
-		if(p1Talking || p2Talking) {
-			return p1Talking ? -1 : 1;
-		}
+		if(p1Talking || p2Talking) return p1Talking ? -1 : 1;
+
 		return 0;
 	});
+
+	/*if (myPlayer?.id !== undefined) {
+		let test = JSON.parse(JSON.stringify(myPlayer));
+		test.id = "bleh";
+		test.name = "Talking"
+		otherTalking[test.id] = true;
+		otherPlayersSorted.push(myPlayer, test, myPlayer, myPlayer, test, myPlayer, test, myPlayer, test);
+	}*/
 
 	return (
 		<div className="root">
@@ -644,20 +678,50 @@ export default function Voice() {
 				</div>
 			</div>
 			<hr />
-			<div className="otherplayers">
-				{
-					otherPlayersSorted.map((player: Player) => {
-						let connected = Object.values(socketPlayerIds).includes(player.id);
-						return (
-							<Avatar key={player.id} player={player}
-								talking={!connected || otherTalking[player.id]}
-								borderColor={connected ? '#2ecc71' : '#c0392b'}
-								isAlive={!otherDead[player.id]}
-								size={50} />
-						);
-					})
-				}
+			{
+				gameState?.gameState === GameState.LOBBY && otherPlayers.length == 0 &&
+				<LobbySettings socket={connectionStuff.current.socket} lobbySettings={lobbySettings}/>
+			}
+			<div className="otherplayers-container">
+				<div className="otherplayers">
+					{
+						otherPlayers/*Sorted*/.filter((player: Player) => {
+							return !overlayMode || otherTalking[player.id];
+						}).map((player: Player) => {
+							let connected = Object.values(socketPlayerIds).includes(player.id);
+							return (
+								<Avatar key={player.id} player={player}
+									talking={!connected || otherTalking[player.id]}
+									borderColor={connected ? '#2ecc71' : '#c0392b'}
+									isAlive={!otherDead[player.id]}
+									size={40} />
+							);
+						})
+					}
+				</div>
 			</div>
+			{ overlayMode &&
+				<hr />
+			}
+			{
+				overlayMode &&
+				<div className="otherplayers">
+					{
+						otherPlayers/*Sorted*/.filter((player: Player) => {
+							return !otherTalking[player.id];
+						}).map((player: Player) => {
+							let connected = Object.values(socketPlayerIds).includes(player.id);
+							return (
+								<Avatar key={player.id} player={player}
+									talking={!connected || otherTalking[player.id]}
+									borderColor={connected ? '#2ecc71' : '#c0392b'}
+									isAlive={!otherDead[player.id]}
+									size={40} />
+							);
+						})
+					}
+				</div>
+			}
 			<div className="reload-app" onMouseUp={() => remote.getCurrentWindow().reload() }>RELOAD</div>
 		</div>
 	)

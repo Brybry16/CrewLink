@@ -13,6 +13,7 @@ export interface AmongUsState {
 	viewingCameras: number;
 	players: Player[];
 }
+
 export interface Player {
 	ptr: number;
 	id: number;
@@ -32,9 +33,11 @@ export interface Player {
 	y: number;
 	inVent: boolean;
 }
+
 export enum GameState {
 	LOBBY, TASKS, DISCUSSION, MENU, UNKNOWN
 }
+
 export enum MapType {
 	THE_SKELD, MIRA_HQ, POLUS, UNKNOWN
 }
@@ -167,12 +170,12 @@ export default class GameReader {
 			let exiledPlayerId = this.readMemory<number>('byte', this.gameAssembly.modBaseAddr, this.offsets.exiledPlayerId);
 			let impostors = 0, crewmates = 0;
 
-			//const localPlayerId = this.readMemory<number>('byte', this.gameAssembly.modBaseAddr, this.offsets.localPlayerId);
+			const localPlayerId = this.readMemory<number>('byte', this.gameAssembly.modBaseAddr, this.offsets.localPlayerId);
 
 			for (let i = 0; i < Math.min(playerCount, 10); i++) {
 				let { address, last } = this.offsetAddress(playerAddrPtr, this.offsets.player.offsets);
 				let playerData = readBuffer(this.amongUs.handle, address + last, this.offsets.player.bufferLength);
-				let player = this.parsePlayer(address + last, playerData/*, localPlayerId*/);
+				let player = this.parsePlayer(address + last, playerData, localPlayerId);
 				playerAddrPtr += 4;
 				players.push(player);
 
@@ -229,12 +232,31 @@ export default class GameReader {
 			this.lastState = newState;
 			this.oldGameState = state;
 		}
+		else {
+			let newState = {
+				lobbyCode: this.gameCode,
+				players: [],
+				gameState: GameState.UNKNOWN,
+				oldGameState: GameState.UNKNOWN,
+				map: MapType.UNKNOWN,
+				openDoors: -1,
+				isCommsSabotaged: false,
+				viewingCameras: 0
+			};
+			let patch = patcher.diff(this.lastState, newState);
+			if (patch) {
+				try {
+					this.reply('gameState', newState);
+				} catch (e) {
+					process.exit(0);
+				}
+			}
+		}
 	}
 
 	constructor(reply: Function, offsets: IOffsets) {
 		this.reply = reply;
 		this.offsets = offsets;
-
 
 		this.PlayerStruct = new Struct();
 		for (let member of offsets.player.struct) {
@@ -244,7 +266,6 @@ export default class GameReader {
 				this.PlayerStruct = this.PlayerStruct.addMember(Struct.TYPES[member.type], member.name);
 			}
 		}
-
 	}
 
 	close() {
@@ -304,11 +325,10 @@ export default class GameReader {
 		}
 	}
 
-	parsePlayer(ptr: number, buffer: Buffer/*, localPlayerId: number*/): Player {
+	parsePlayer(ptr: number, buffer: Buffer, localPlayerId: number): Player {
 		let { data } = this.PlayerStruct.report(buffer, 0, {});
 
-		//let isLocal = data.id === localPlayerId;
-		let isLocal = this.readMemory<number>('int', data.objectPtr, this.offsets.player.isLocal) !== 0;
+		let isLocal = data.id === localPlayerId;
 
 		let positionOffsets = isLocal ? [
 			this.offsets.player.localX,

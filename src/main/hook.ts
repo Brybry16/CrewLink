@@ -27,7 +27,7 @@ export interface IOffsets {
 	playerCount: number[];
 	playerAddrPtr: number;
 	exiledPlayerId: number[];
-	//localPlayerId: number[];
+	localPlayerId: number[];
 	gameCode: number[];
 	ship: number[];
 	map: number[];
@@ -50,7 +50,6 @@ export interface IOffsets {
 	polusSurveillanceDefIndex: number;
 	polusSurveillanceCurrentCamera: number[];
 	player: {
-		isLocal: number[];
 		localX: number[];
 		localY: number[];
 		remoteX: number[];
@@ -122,7 +121,6 @@ async function loadOffsets(event: Electron.IpcMainEvent): Promise<IOffsets | und
 		event.reply('error', `Couldn't parse the latest game offsets from the server: ${url}.\n${e}`);
 		return;
 	}
-
 }
 
 let readingGame = false;
@@ -148,13 +146,13 @@ ipcMain.on('start', async (event) => {
 			if (keyCodeMatches(store.get('deafenShortcut') as K, ev)) {
 				event.reply('toggleDeafen');
 			}
-			if (keyCodeMatches((store.get('muteShortcut') || 'RAlt') as K, ev)) {
+			if (keyCodeMatches(store.get('muteShortcut', 'RAlt') as K, ev)) {
 				event.reply('toggleMute');
 			}
-			if (keyCodeMatches((store.get('deafenDeadShortcut') || 'F1') as K, ev)) {
+			if (keyCodeMatches(store.get('deafenDeadShortcut', 'F1') as K, ev)) {
 				event.reply('toggleDeafenDead');
 			}
-			if (keyCodeMatches((store.get('deafenLivingShortcut') || 'F2') as K, ev)) {
+			if (keyCodeMatches(store.get('deafenLivingShortcut', 'F2') as K, ev)) {
 				event.reply('toggleDeafenLiving');
 			}
 		});

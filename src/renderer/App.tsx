@@ -50,7 +50,7 @@ function App() {
 		},
 		hideCode: false,
 		stereo: true,
-		transparentWindow: false
+		overlayMode: false
 	});
 
 	useEffect(() => {
@@ -90,12 +90,13 @@ function App() {
 			break;
 	}
 	
-	let backgroundClass = settings[0].transparentWindow && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU ? "background-transparent" : "background";
+	let overlayMode = settings[0].overlayMode && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU;
+	ipcRenderer.send('toggleOverlay', overlayMode);
 
 	return (
 		<GameStateContext.Provider value={gameState}>
 			<SettingsContext.Provider value={settings}>
-				<div className={backgroundClass}>
+				<div className={overlayMode ? "background-transparent" : "background"}>
 					<div className="titlebar">
 						<span className="title">CrewLink+ {appVersion}</span>
 						<svg className="titlebar-button settings" onClick={() => setSettingsOpen(!settingsOpen)} enableBackground="new 0 0 24 24" viewBox="0 0 24 24" fill="#868686" width="20px" height="20px">

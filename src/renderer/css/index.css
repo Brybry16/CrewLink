@@ -36,6 +36,8 @@ body {
 	/* border-width: 5px; */
 	border-style: solid;
 	transition: border-color .2s ease-out;
+	margin-left: auto;
+	margin-right: auto;
 }
 
 .avatar>svg {
@@ -60,6 +62,24 @@ body {
 	text-align: center;
 	font-size: 20px;
 	user-select: none;
+}
+
+.small-username {
+	display: block;
+	text-align: center;
+	font-size: 12px;
+	user-select: none;
+	text-shadow: -1px 1px 1px #000,
+				  1px 1px 1px #000,
+				 1px -1px 1px #000,
+				-1px -1px 1px #000;
+	/*background-color: #23272ABB;*/
+	width: 100%;
+	min-width: 80px;
+	max-width: 80px;
+	height: 16px;
+	white-space: nowrap;
+	overflow: hidden;
 }
 
 .code {
@@ -111,6 +131,12 @@ body {
 	align-items: center;
 	width: '100%';
 	flex-wrap: wrap;
+	/*min-height: 237px;*/
+}
+
+.otherplayers-container {
+	width: '100%';
+	min-height: 237px;
 }
 
 .otherplayers>* {
