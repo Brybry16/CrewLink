@@ -61,7 +61,7 @@ interface OtherDead {
 // 	return clamp((n - oldLow) / (oldHigh - oldLow) * (newHigh - newLow) + newLow, newLow, newHigh);
 // }
 
-function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Player, other: Player, audio: PeerAudio): void {
+function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Player, other: Player, audio: PeerAudio, lobbySettings: ILobbySettings): void {
 	const audioContext = audio.pan.context;
 	audio.pan.positionZ.setValueAtTime(-0.5, audioContext.currentTime);
 	let panPos: Array<number>;
@@ -85,9 +85,8 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 		g = 1;
 	} else if (state.gameState === GameState.MENU) {
 		g = 0;
-	//} else if (other.inVent) {
-	} else if ((!me.isImpostor || !me.inVent) && other.inVent) {
-		g = 0;
+	} else if (other.inVent) {
+		g = me.inVent && lobbySettings.impostorVentChat ? 1 : 0;
 	} else if (other.isDead) {
 		g = me.isDead && dist <= maxDist ? 1 : 0;
 	} else if (state.gameState === GameState.DISCUSSION) {
@@ -109,10 +108,13 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 			g = 0;
 		} else if (me.isDead) {
 			g = 1;
-		} /*else if (state.isCommsSabotaged) {
+		} else if (state.isCommsSabotaged && lobbySettings.commsSabotageVoice) {
 			g = 0;
-		}*/ else {
+		} else {
 			g = 1 - map.blocked(state, me.x, me.y, other.x, other.y);
+			if (g === 1 && me.inVent) {
+				g = 0.5;
+			}
 		}
 		if (g < 1 && !state.isCommsSabotaged && state.viewingCameras !== 0) {
 			const r = 3;
@@ -199,8 +201,9 @@ export default function Voice() {
 	let { lobbyCode: displayedLobbyCode } = gameState;
 	if (displayedLobbyCode !== 'MENU' && settings.hideCode) displayedLobbyCode = 'LOBBY';
 	const [talking, setTalking] = useState(false);
+	const [joinedLobby, setJoinedLobby] = useState<string>('MENU');
 	const [socketPlayerIds, setSocketPlayerIds] = useState<SocketIdMap>({});
-	const [connect, setConnect] = useState<({ connect: (lobbyCode: string, playerId: number) => void }) | null>(null);
+	const [connect, setConnect] = useState<({ connect: (lobbyCode: string, playerId: number) => void, initiatePeer: (peer: string) => void }) | null>(null);
 	const [otherTalking, setOtherTalking] = useState<OtherTalking>({});
 	const [otherDead, setOtherDead] = useState<OtherDead>({});
 	const audioElements = useRef<AudioElements>({});
@@ -280,6 +283,7 @@ export default function Voice() {
 		});
 		socket.on('disconnect', () => {
 			setConnected(false);
+			setJoinedLobby('MENU');
 			console.log('disconnected');
 		});
 		
@@ -300,91 +304,90 @@ export default function Voice() {
 		}
 
 		//function checkMicMute(pressing: boolean = false) {
-		function checkMicMute(source: number) {
-			if (!myPlayer?.isDead) {
-				connectionStuff.current.deadDeafened = false;
-				connectionStuff.current.livingDeafened = false;
+			function checkMicMute(sourceDeafen: boolean = false) {
+				if (!myPlayer?.isDead) {
+					connectionStuff.current.deadDeafened = false;
+					connectionStuff.current.livingDeafened = false;
+				}
+	
+				if (!connectionStuff.current.deafened && connectionStuff.current.deadDeafened && connectionStuff.current.livingDeafened || // if both living and dead are deafened, switch to full deafen
+				connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened) && sourceDeafen) { // if dead or living are deafened and full deafen is pressed, remove other deafens
+					connectionStuff.current.deafened = true;
+					connectionStuff.current.deadDeafened = false;
+					connectionStuff.current.livingDeafened = false;
+				}
+				else if (connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened)) { // if full deafened and dead or living deafen are pressed, exit full deafen and deafen living or dead respectively
+					connectionStuff.current.deafened = false;
+					connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
+					connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
+				}
+	
+				if (!connectionStuff.current.stream) return;
+	
+				if (settings.pushToTalk) {
+					connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && connectionStuff.current.pressingPushToTalk;
+				}
+				else {
+					connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && !connectionStuff.current.muted;
+				}
+	
+				setDeafened(connectionStuff.current.deafened);
+				setMuted(connectionStuff.current.muted);
+				setDeadDeafened(connectionStuff.current.deadDeafened);
+				setLivingDeafened(connectionStuff.current.livingDeafened);
 			}
-
-			if (!connectionStuff.current.deafened && connectionStuff.current.deadDeafened && connectionStuff.current.livingDeafened || // if both living and dead are deafened, switch to full deafen
-			connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened) && source == 1) { // if dead or living are deafened and full deafen is pressed, remove other deafens
-				connectionStuff.current.deafened = true;
-				connectionStuff.current.deadDeafened = false;
-				connectionStuff.current.livingDeafened = false;
-			}
-			else if (connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened)) { // if full deafened and dead or living deafen are pressed, exit full deafen and deafen living or dead respectively
-				connectionStuff.current.deafened = false;
+	
+			const toggleDeafen = () => {
+				connectionStuff.current.deafened = !connectionStuff.current.deafened;
+				checkMicMute(true);
+			};
+	
+			const toggleMute = () => {
+				connectionStuff.current.muted = !connectionStuff.current.muted;
+				checkMicMute();
+			};
+			const toggleDeafenDead = () => {
+				if (!myPlayer?.isDead) {
+					return;
+				}
 				connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
+				checkMicMute();
+			};
+			const toggleDeafenLiving = () => {
+				if (!myPlayer?.isDead) {
+					return;
+				}
 				connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
-			}
-
-			if (!connectionStuff.current.stream) return;
-
-			if (settings.pushToTalk) {
-				//stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && pressing;
-				connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && connectionStuff.current.pressingPushToTalk;
-			}
-			else {
-				connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && !connectionStuff.current.muted;
-			}
-
-			setDeafened(connectionStuff.current.deafened);
-			setMuted(connectionStuff.current.muted);
-			setDeadDeafened(connectionStuff.current.deadDeafened);
-			setLivingDeafened(connectionStuff.current.livingDeafened);
-		}
-
-		const toggleDeafen = () => {
-			connectionStuff.current.deafened = !connectionStuff.current.deafened;
-			checkMicMute(1);
-		};
-
-		const toggleMute = () => {
-			connectionStuff.current.muted = !connectionStuff.current.muted;
-			checkMicMute(2);
-		};
-		const toggleDeafenDead = () => {
-			if (!myPlayer?.isDead) {
-				return;
-			}
-			connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
-			checkMicMute(3);
-		};
-		const toggleDeafenLiving = () => {
-			if (!myPlayer?.isDead) {
-				return;
-			}
-			connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
-			checkMicMute(4);
-		};
-		const pushToTalk = (_: any, pressing: boolean) => {
-			/*if (!connectionStuff.current.pushToTalk) return;
-			if (!connectionStuff.current.deafened) {
-				stream.getAudioTracks()[0].enabled = pressing;
-			}*/
-			connectionStuff.current.pressingPushToTalk = pressing;
-			checkMicMute(5);
-			// console.log(stream.getAudioTracks()[0].enabled);
-		};
-
-		let playerCount = gameState?.players?.length;
-		const gameStateUpdate = (_: any, newState: AmongUsState) => {
-			checkMicMute(6);
-
-			if (playerCount !== newState.players.length && newState.lobbyCode !== 'MENU') {
-				playerCount = newState.players.length;
-
-				socket.emit('lobbyPlayerCount', newState.lobbyCode, playerCount);
-			}
-		};
-
-		ipcRenderer.on('toggleDeafen', toggleDeafen);
-		ipcRenderer.on('toggleMute', toggleMute);
-		ipcRenderer.on('toggleDeafenDead', toggleDeafenDead);
-		ipcRenderer.on('toggleDeafenLiving', toggleDeafenLiving);
-		ipcRenderer.on('pushToTalk', pushToTalk);
-		ipcRenderer.on('gameState', gameStateUpdate);
-
+				checkMicMute();
+			};
+			const pushToTalk = (_: any, pressing: boolean) => {
+				/*if (!connectionStuff.current.pushToTalk) return;
+				if (!connectionStuff.current.deafened) {
+					stream.getAudioTracks()[0].enabled = pressing;
+				}*/
+				connectionStuff.current.pressingPushToTalk = pressing;
+				checkMicMute();
+				// console.log(stream.getAudioTracks()[0].enabled);
+			};
+	
+			let playerCount = gameState?.players?.length;
+			const gameStateUpdate = (_: any, newState: AmongUsState) => {
+				checkMicMute();
+	
+				if (playerCount !== newState.players.length && newState.lobbyCode !== 'MENU') {
+					playerCount = newState.players.length;
+	
+					socket.emit('lobbyPlayerCount', newState.lobbyCode, playerCount);
+				}
+			};
+	
+			ipcRenderer.on('toggleDeafen', toggleDeafen);
+			ipcRenderer.on('toggleMute', toggleMute);
+			ipcRenderer.on('toggleDeafenDead', toggleDeafenDead);
+			ipcRenderer.on('toggleDeafenLiving', toggleDeafenLiving);
+			ipcRenderer.on('pushToTalk', pushToTalk);
+			ipcRenderer.on('gameState', gameStateUpdate);
+	
 		openMic(async (stream) => {
 			connectionStuff.current.stream = stream;
 			
@@ -395,7 +398,7 @@ export default function Voice() {
 
 			audioTrack.enabled = !settings.pushToTalk;
 
-			checkMicMute(0);
+			checkMicMute();
 
 			audioTrack.addEventListener('ended', () => {
 				remote.dialog.showMessageBox(remote.getCurrentWindow(),
@@ -454,14 +457,25 @@ export default function Voice() {
 					disconnectPeer(k);
 				});
 				setSocketPlayerIds({});
+				setJoinedLobby(lobbyCode);
 				if (lobbyCode === 'MENU') return;
 				socket.emit('join', lobbyCode, playerId);
 				socket.emit('lobbyPlayerCount', lobbyCode, gameState?.players?.length ?? 1);
+				console.log(`Joining lobby ${lobbyCode}: ${playerId}`);
 			};
-			setConnect({ connect });
+
+			const initiatePeer = (peer: string) => {
+				const connection = peerConnections[peer];
+				if (!connection || connection.destroyed) {
+					createPeerConnection(peer, true);	
+				}
+			};
+			setConnect({ connect, initiatePeer });
+
 			function createPeerConnection(peer: string, initiator: boolean) {
 				disconnectPeer(peer);
 
+				console.log(`Establishing connection to ${peer}, initator: ${initiator}`);
 				const connection = new Peer({
 					stream: peerStream, initiator, config: {
 						iceServers: [
@@ -483,7 +497,7 @@ export default function Voice() {
 					let pan = audioOut.ctx.createPanner();
 					pan.refDistance = 0.1;
 					pan.panningModel = 'equalpower';
-					pan.distanceModel = 'linear';
+					pan.distanceModel = 'linear'; //exponential
 					//pan.maxDistance = 2.66 * 2;
 					pan.maxDistance = 2.4;
 					pan.rolloffFactor = 1;
@@ -527,10 +541,18 @@ export default function Voice() {
 						to: peer
 					});
 				});
-				connection.on('error', (error) => {
+				connection.on('error', (error: any) => {
 					console.log(error);
 					if (initiator) {
-						remote.dialog.showErrorBox('Connection Error', `A voice connection error occurred: ${error.name}\n\n${error.message}`);
+						if (error.code !== 'ERR_WEBRTC_SUPPORT' &&
+								error.code !== 'ERR_SIGNALING' &&
+								error.code !== 'ERR_DATA_CHANNEL') {
+							setTimeout(() => {
+								createPeerConnection(peer, true);
+							}, 500 + Math.random() * 3000 | 0);
+						} else {
+							remote.dialog.showErrorBox('Connection Error', `A voice connection error occurred: ${error.name}\n\n${error.message}`);
+						}
 					}
 				});
 				connection.on('close', () => {
@@ -540,30 +562,36 @@ export default function Voice() {
 				return connection;
 			}
 			socket.on('join', async (peer: string, playerId: number) => {
-				createPeerConnection(peer, true);
 				setSocketPlayerIds(old => ({ ...old, [peer]: playerId }));
 			});
 			socket.on('signal', ({ data, from }: any) => {
 				let connection: Peer.Instance;
-				if (peerConnections[from]) connection = peerConnections[from];
+				if (peerConnections[from] && !peerConnections[from].destroyed) connection = peerConnections[from];
 				else connection = createPeerConnection(from, false);
 				connection.signal(data);
 			});
 			socket.on('setId', (socketId: string, id: number) => {
 				setSocketPlayerIds(old => ({ ...old, [socketId]: id }));
 			})
+			socket.on('deleteId', (socketId: string) => {
+				setSocketPlayerIds(old => {
+					const copy = { ...old };
+					delete copy[socketId];
+					return copy;
+				});
+			})
 			socket.on('setIds', (ids: SocketIdMap) => {
 				setSocketPlayerIds(ids);
 			});
 			socket.on('lobbySetting', (setting: string, value: any) => {
-				console.log('lobbySetting: ' + setting + ' - ' + value);
+				console.log(`lobbySetting: ${setting} - ${value}`);
 
 				setLobbySettings(old => ({ ...old, [setting]: value }));
 			});
 			socket.on('lobbySettings', (settings: ILobbySettings) => {
-				//console.log('lobbySettings: ' + Object.keys(settings));
+				//console.log(`lobbySettings: ${Object.keys(settings)}`);
 				for (let s of Object.keys(settings)) {
-					console.log('lobbySetting: ' + s + ' - ' + settings[s]);
+					console.log(`lobbySetting: ${s} - ${settings[s]}`);
 				}
 
 				setLobbySettings(settings);
@@ -585,8 +613,7 @@ export default function Voice() {
 	}, []);
 
 	const myPlayer = useMemo(() => {
-		if (!gameState || !gameState.players) return undefined;
-		else return gameState.players.find(p => p.isLocal);
+		return gameState?.players?.find(p => p.isLocal);
 	}, [gameState]);
 
 	const otherPlayers = useMemo(() => {
@@ -601,7 +628,7 @@ export default function Voice() {
 		for (let player of otherPlayers) {
 			const audio = audioElements.current[playerSocketIds[player.id]];
 			if (audio) {
-				calculateVoiceAudio(gameState, settingsRef.current, myPlayer!, player, audio);
+				calculateVoiceAudio(gameState, settingsRef.current, myPlayer!, player, audio, lobbySettings);
 				if (connectionStuff.current.deafened || myPlayer?.isDead && (otherDead[player.id] && connectionStuff.current.deadDeafened || !otherDead[player.id] && connectionStuff.current.livingDeafened)) {
 					audio.gain.gain.value = 0;
 				}
@@ -617,18 +644,33 @@ export default function Voice() {
 		}
 	}, [connect?.connect, gameState?.lobbyCode]);
 
-	useEffect(() => {
-		if (connect?.connect && gameState.lobbyCode && myPlayer?.id !== undefined && gameState.gameState === GameState.LOBBY && (gameState.oldGameState === GameState.DISCUSSION || gameState.oldGameState === GameState.TASKS)) {
-			connect.connect(gameState.lobbyCode, myPlayer.id);
-		}
-	}, [gameState.gameState]);
+	// useEffect(() => {
+	// 	if (connect?.connect && gameState.lobbyCode && myPlayer?.id !== undefined && gameState.gameState === GameState.LOBBY && (gameState.oldGameState === GameState.DISCUSSION || gameState.oldGameState === GameState.TASKS)) {
+	// 		connect.connect(gameState.lobbyCode, myPlayer.id);
+	// 	}
+	// }, [gameState.gameState]);
 
 	useEffect(() => {
-		if (connectionStuff.current.socket && myPlayer?.id !== undefined) {
+		if (myPlayer?.id === undefined) return;
+		if (connectionStuff.current.socket) {
 			connectionStuff.current.socket.emit('id', myPlayer.id);
 		}
-	}, [myPlayer?.id]);
-	
+
+		const code = gameState?.lobbyCode;
+		if (connect?.connect && code && code !== joinedLobby) {
+			connect.connect(gameState.lobbyCode, myPlayer.id);
+		}
+	}, [connect?.connect, myPlayer?.id]);
+
+	useEffect(() => {
+		if (myPlayer?.id === undefined || !connect?.initiatePeer) return;
+		for (let k of Object.keys(socketPlayerIds)) {
+			if (myPlayer.id < socketPlayerIds[k]) {
+				connect.initiatePeer(k);
+			}
+		}
+	}, [connect?.initiatePeer, myPlayer?.id, socketPlayerIds]);
+
 	let overlayMode = settings.overlayMode && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU && otherPlayers.length > 0;
 
 	/*const otherPlayersSorted = JSON.parse(JSON.stringify(otherPlayers));

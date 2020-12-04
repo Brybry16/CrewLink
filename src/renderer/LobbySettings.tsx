@@ -23,6 +23,12 @@ export default function LobbySettings({ socket, lobbySettings }: ILobbySettingsP
 					<input type="checkbox" checked={lobbySettings.impostorVentChat ?? true} style={{ color: '#9b59b6' }} readOnly />
 					<label>Impostor chat in vent</label>
 				</div>
+				<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => { 
+					socket.emit('setLobbySetting', 'commsSabotageVoice', !lobbySettings.commsSabotageVoice);
+				}}>
+					<input type="checkbox" checked={lobbySettings.commsSabotageVoice ?? false} style={{ color: '#9b59b6' }} readOnly />
+					<label>Comms sabotage disables voice</label>
+				</div>
 			</div>
 		</div>
 	);
