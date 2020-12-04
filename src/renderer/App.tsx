@@ -90,7 +90,7 @@ function App() {
 			break;
 	}
 	
-	let overlayMode = settings[0].overlayMode && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU;
+	let overlayMode = settings[0].overlayMode && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU && gameState.players?.length > 1;
 	ipcRenderer.send('toggleOverlay', overlayMode);
 
 	return (
