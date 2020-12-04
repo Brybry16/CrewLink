@@ -20,7 +20,7 @@ export default function LobbySettings({ socket, lobbySettings }: ILobbySettingsP
 				<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => { 
 					socket.emit('setLobbySetting', 'impostorVentChat', !lobbySettings.impostorVentChat);
 				}}>
-					<input type="checkbox" checked={lobbySettings.impostorVentChat && true} style={{ color: '#9b59b6' }} readOnly />
+					<input type="checkbox" checked={lobbySettings.impostorVentChat ?? true} style={{ color: '#9b59b6' }} readOnly />
 					<label>Impostor chat in vent</label>
 				</div>
 			</div>
