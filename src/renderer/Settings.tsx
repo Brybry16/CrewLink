@@ -1,10 +1,19 @@
-import { ipcRenderer, remote } from 'electron';
+import { remote } from 'electron';
 import Store from 'electron-store';
 import React, { useContext, useEffect, useReducer, useRef, useState } from "react";
 import { SettingsContext } from "./App";
+import Ajv from 'ajv';
 import './css/settings.css';
 
 const keys = new Set(['Space', 'Backspace', 'Delete', 'Enter', 'Up', 'Down', 'Left', 'Right', 'Home', 'End', 'PageUp', 'PageDown', 'Escape', 'LControl', 'LShift', 'LAlt', 'RControl', 'RShift', 'RAlt']);
+
+const validateURL = new Ajv({
+	allErrors: true,
+	format: 'full'
+}).compile({
+	type: 'string',
+	format: 'uri'
+});
 
 const store = new Store<ISettings>({
 	schema: {
@@ -30,7 +39,8 @@ const store = new Store<ISettings>({
 		},
 		server: {
 			type: 'string',
-			default: 'https://crewlink.paulf.me'
+			default: 'https://crewlink.paulf.me',
+			format: 'uri'
 		},
 		pushToTalkShortcut: {
 			type: 'string',
@@ -82,7 +92,7 @@ const store = new Store<ISettings>({
 
 export interface SettingsProps {
 	open: boolean;
-	onClose: any;
+	/*onClose: any;*/
 }
 
 export interface ISettings {
@@ -105,6 +115,7 @@ export interface ISettings {
 	stereo: boolean;
 	overlayMode: boolean;
 }
+
 export const settingsReducer = (state: ISettings, action: {
 	type: 'set' | 'setOne', action: [string, any] | ISettings
 }): ISettings => {
@@ -123,7 +134,35 @@ interface MediaDevice {
 	label: string;
 }
 
-export default function Settings({ open, onClose }: SettingsProps) {
+type URLInputProps = {
+	initialURL: string,
+	onValidURL: (url: string) => void
+};
+
+function URLInput({ initialURL, onValidURL }: URLInputProps) {
+	const [isValidURL, setURLValid] = useState(true);
+	const [currentURL, setCurrentURL] = useState(initialURL);
+
+	useEffect(() => {
+		setCurrentURL(initialURL);
+	}, [initialURL]);
+
+	function onChange(event: React.ChangeEvent<HTMLInputElement>) {
+		setCurrentURL(event.target.value);
+
+		if (validateURL(event.target.value)) {
+			setURLValid(true);
+			onValidURL(event.target.value);
+		} else {
+			setURLValid(false);
+		}
+	}
+
+
+	return <input className={isValidURL ? '' : 'input-error'} spellCheck={false} type="text" value={currentURL} onChange={onChange}/>
+}
+
+export default function Settings({ open/*, onClose*/ }: SettingsProps) {
 	const [settings, setSettings] = useContext(SettingsContext);
 	const [unsavedCount, setUnsavedCount] = useState(0);
 	const unsaved = unsavedCount > 2;
@@ -230,46 +269,40 @@ export default function Settings({ open, onClose }: SettingsProps) {
 	const microphones = devices.filter(d => d.kind === 'audioinput');
 	const speakers = devices.filter(d => d.kind === 'audiooutput');
 
-	return <div id="settings" style={{ transform: open ? 'translateX(0)' : 'translateX(-100%)' }}>
-		<svg className="titlebar-button back" viewBox="0 0 24 24" fill="#868686" width="20px" height="20px" onClick={() => {
-			if (unsaved) {
-				onClose();
-				location.reload();
-			}
-			else
-				onClose();
-		}}>
-			<path d="M0 0h24v24H0z" fill="none" />
-			<path d="M11.67 3.87L9.9 2.1 0 12l9.9 9.9 1.77-1.77L3.54 12z" />
-		</svg>
-		{/* <div className="form-control m" style={{ color: '#e74c3c' }} onClick={() => {
-			ipcRenderer.send('alwaysOnTop', !settings.alwaysOnTop);
-			setSettings({
-				type: 'setOne',
-				action: ['alwaysOnTop', !settings.alwaysOnTop]
-			});
-		}}>
-			<input type="checkbox" checked={settings.alwaysOnTop} readOnly />Always on Top
-		</div> */}
-		<div className="settings-scroll">
+	if (!open && unsaved) location.reload();
 
+	function setSetting(setting: string, value: any) {
+		setSettings({
+			type: 'setOne',
+			action: [setting, value]
+		});
+	}
+	
+	return <div id="settings" style={{ transform: open ? 'translateX(0)' : 'translateX(-100%)' }}>
+		{/*<div className="titlebar">
+			<span className="title">Client Settings</span>
+			<svg className="titlebar-button back" viewBox="0 0 24 24" fill="#868686" width="20px" height="20px" onClick={() => {
+				if (unsaved) {
+					onClose();
+					location.reload();
+				}
+				else
+					onClose();
+			}}>
+				<path d="M0 0h24v24H0z" fill="none"/>
+				<path d="M11.67 3.87L9.9 2.1 0 12l9.9 9.9 1.77-1.77L3.54 12z"/>
+			</svg>
+		</div>*/}
+		<div className="settings-scroll">
 			<div className="form-control m l" style={{ color: '#e74c3c' }}>
 				<label>Microphone</label>
 				<div className="fader-holder">
-					<input ref={micFader} className="fader" type="range" min="0" max="2" step="0.05" list="volsettings" value={settings.microphoneGain} onChange={(ev) => setSettings({
-						type: 'setOne',
-						action: ['microphoneGain', +ev.currentTarget.value]
-					})} />
+					<input ref={micFader} className="fader" type="range" min="0" max="2" step="0.05" list="volsettings" value={settings.microphoneGain} onChange={(ev) => setSetting('microphoneGain', +ev.currentTarget.value)}/>
 					<datalist id="volsettings">
 						<option>1</option>
 					</datalist>
 				</div>
-				<select value={settings.microphone} onChange={(ev) => {
-					setSettings({
-						type: 'setOne',
-						action: ['microphone', microphones[ev.target.selectedIndex].id]
-					});
-				}} onClick={() => updateDevices()}>
+				<select value={settings.microphone} onChange={(ev) => setSetting('microphone', microphones[ev.target.selectedIndex].id)} onClick={() => updateDevices()}>
 					{
 						microphones.map(d => (
 							<option key={d.id} value={d.id}>{d.label}</option>
@@ -279,12 +312,7 @@ export default function Settings({ open, onClose }: SettingsProps) {
 			</div>
 			<div className="form-control m l" style={{ color: '#e67e22' }}>
 				<label>Speaker</label>
-				<select value={settings.speaker} onChange={(ev) => {
-					setSettings({
-						type: 'setOne',
-						action: ['speaker', speakers[ev.target.selectedIndex].id]
-					});
-				}} onClick={() => updateDevices()}>
+				<select value={settings.speaker} onChange={(ev) => setSetting('speaker', speakers[ev.target.selectedIndex].id)} onClick={() => updateDevices()}>
 					{
 						speakers.map(d => 
 							<option key={d.id} value={d.id}>{d.label}</option>
@@ -292,71 +320,53 @@ export default function Settings({ open, onClose }: SettingsProps) {
 					}
 				</select>
 			</div>
-			<div className="form-control m" style={{ color: '#f1c40f' }} onClick={() => setSettings({
-				type: 'setOne',
-				action: ['pushToTalk', false]
-			})}>
-				<input type="radio" checked={!settings.pushToTalk} style={{ color: '#f1c40f' }} readOnly />
+			<div className="form-control m" style={{ color: '#f1c40f' }} onClick={() => setSetting('pushToTalk', false)}>
+				<input type="radio" checked={!settings.pushToTalk} style={{ color: '#f1c40f' }} readOnly/>
 				<label>Voice Activity</label>
 			</div>
-			<div className={`form-control${settings.pushToTalk ? '' : ' m'}`} style={{ color: '#f1c40f' }} onClick={() => setSettings({
-				type: 'setOne',
-				action: ['pushToTalk', true]
-			})}>
-				<input type="radio" checked={settings.pushToTalk} readOnly />
+			<div className={`form-control${settings.pushToTalk ? '' : ' m'}`} style={{ color: '#f1c40f' }} onClick={() => setSetting('pushToTalk', true)}>
+				<input type="radio" checked={settings.pushToTalk} readOnly/>
 				<label>Push to Talk</label>
 			</div>
 			{settings.pushToTalk &&
 				<div className="form-control m" style={{ color: '#f1c40f' }}>
-					<input spellCheck={false} type="text" value={settings.pushToTalkShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'pushToTalkShortcut')} />
+					<input spellCheck={false} type="text" value={settings.pushToTalkShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'pushToTalkShortcut')}/>
 				</div>
 			}
 			{!settings.pushToTalk && <div className="form-control l m" style={{ color: '#2ecc71' }}>
 				<label>Mute Shortcut</label>
-				<input spellCheck={false} type="text" value={settings.muteShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'muteShortcut')} />
+				<input spellCheck={false} type="text" value={settings.muteShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'muteShortcut')}/>
 			</div>
 			}
 			<div className="form-control l m" style={{ color: '#2ecc71' }}>
 				<label>Deafen Shortcut</label>
-				<input spellCheck={false} type="text" value={settings.deafenShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenShortcut')} />
+				<input spellCheck={false} type="text" value={settings.deafenShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenShortcut')}/>
 			</div>
 			<div className="form-control l m" style={{ color: '#2ecc71' }}>
 				<label>Deafen Dead Shortcut</label>
-				<input spellCheck={false} type="text" value={settings.deafenDeadShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenDeadShortcut')} />
+				<input spellCheck={false} type="text" value={settings.deafenDeadShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenDeadShortcut')}/>
 			</div>
 			<div className="form-control l m" style={{ color: '#2ecc71' }}>
 				<label>Deafen Living Shortcut</label>
-				<input spellCheck={false} type="text" value={settings.deafenLivingShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenLivingShortcut')} />
+				<input spellCheck={false} type="text" value={settings.deafenLivingShortcut} readOnly onKeyDown={(ev) => setShortcut(ev, 'deafenLivingShortcut')}/>
 			</div>
 			<div className="form-control l m" style={{ color: '#3498db' }}>
 				<label>Voice Server</label>
-				<input spellCheck={false} type="text" onChange={(ev) => setSettings({
-					type: 'setOne',
-					action: ['server', ev.target.value]
-				})} value={settings.server} />
+				<URLInput initialURL={settings.server} onValidURL={(url: string) => setSetting('server', url)}/>
 			</div>
-			<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => setSettings({
-				type: 'setOne',
-				action: ['hideCode', !settings.hideCode]
-			})}>
-				<input type="checkbox" checked={!settings.hideCode} style={{ color: '#9b59b6' }} readOnly />
+			<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => setSetting('hideCode', !settings.hideCode)}>
+				<input type="checkbox" checked={!settings.hideCode} style={{ color: '#9b59b6' }} readOnly/>
 				<label>Show Lobby Code</label>
 			</div>
-			<div className="form-control m" style={{ color: '#fd79a8' }} onClick={() => setSettings({
-				type: 'setOne',
-				action: ['stereo', !settings.stereo]
-			})}>
-				<input type="checkbox" checked={settings.stereo} style={{ color: '#fd79a8' }} readOnly />
+			<div className="form-control m" style={{ color: '#fd79a8' }} onClick={() => setSetting('stereo', !settings.stereo)}>
+				<input type="checkbox" checked={settings.stereo} style={{ color: '#fd79a8' }} readOnly/>
 				<label>Stereo Audio</label>
 			</div>
 			<div className="form-control m" style={{ color: '#9b59b6' }} onClick={() => { 
-				ipcRenderer.send('toggleOverlay', !settings.overlayMode);
-				setSettings({
-					type: 'setOne',
-					action: ['overlayMode', !settings.overlayMode]
-				})
+				//ipcRenderer.send('toggleOverlay', !settings.overlayMode);
+				setSetting('overlayMode', !settings.overlayMode);
 			}}>
-				<input type="checkbox" checked={settings.overlayMode} style={{ color: '#9b59b6' }} readOnly />
+				<input type="checkbox" checked={settings.overlayMode} style={{ color: '#9b59b6' }} readOnly/>
 				<label>Overlay mode</label>
 			</div>
 		</div>

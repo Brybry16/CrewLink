@@ -2,15 +2,19 @@
 
 import { autoUpdater } from 'electron-updater';
 import { app, BrowserWindow, ipcMain } from 'electron';
-import * as path from 'path'
-import { format as formatUrl } from 'url'
+import * as path from 'path';
+import { format as formatUrl } from 'url';
 import './hook';
 
-const isDevelopment = process.env.NODE_ENV !== 'production'
+const isDevelopment = process.env.NODE_ENV !== 'production';
 
 // global reference to mainWindow (necessary to prevent window from being garbage collected)
 let mainWindow: BrowserWindow | null;
 
+if (isDevelopment) {
+	app.commandLine.appendSwitch('remote-debugging-port', '9222');
+	app.commandLine.appendSwitch('userDataDir', 'true');
+}
 app.commandLine.appendSwitch('disable-pinch');
 
 const gotTheLock = app.requestSingleInstanceLock();
@@ -22,10 +26,10 @@ if (!gotTheLock) {
 	app.on('second-instance', (event, commandLine, workingDirectory) => {
 		// Someone tried to run a second instance, we should focus our window.
 		if (mainWindow) {
-			if (mainWindow.isMinimized()) mainWindow.restore()
-			mainWindow.focus()
+			if (mainWindow.isMinimized()) mainWindow.restore();
+			mainWindow.focus();
 		}
-	})
+	});
 
 	let defaultWidth = /*250*/275/*300*/;
 	let defaultHeight = /*350*/396;
@@ -43,6 +47,7 @@ if (!gotTheLock) {
 			fullscreenable: false,
 			maximizable: false,
 			transparent: true,
+			backgroundColor: '#00FFFFFF', // Needs to be specified so that dev tools won't revert background color to white and break transparency.
 			webPreferences: {
 				nodeIntegration: true,
 				enableRemoteModule: true,
@@ -51,11 +56,9 @@ if (!gotTheLock) {
 		});
 
 		if (isDevelopment) {
-			window.webContents.openDevTools()
-		}
+			window.webContents.openDevTools();
 
-		if (isDevelopment) {
-			window.loadURL(`http://localhost:${process.env.ELECTRON_WEBPACK_WDS_PORT}?version=${autoUpdater.currentVersion.version}`)
+			window.loadURL(`http://localhost:${process.env.ELECTRON_WEBPACK_WDS_PORT}?version=${autoUpdater.currentVersion.version}`);
 		}
 		else {
 			window.loadURL(formatUrl({
@@ -65,19 +68,19 @@ if (!gotTheLock) {
 					version: autoUpdater.currentVersion.version
 				},
 				slashes: true
-			}))
+			}));
 		}
 
 		window.on('closed', () => {
 			mainWindow = null
-		})
+		});
 
 		window.webContents.on('devtools-opened', () => {
-			window.focus()
+			window.focus();
 			setImmediate(() => {
-				window.focus()
-			})
-		})
+				window.focus();
+			});
+		});
 
 		return window
 	}
@@ -86,46 +89,29 @@ if (!gotTheLock) {
 	app.on('window-all-closed', () => {
 		// on macOS it is common for applications to stay open until the user explicitly quits
 		if (process.platform !== 'darwin') {
-			app.quit()
+			app.quit();
 		}
-	})
+	});
 
 	app.on('activate', () => {
 		// on macOS it is common to re-create a window even after all windows have been closed
 		if (mainWindow === null) {
-			mainWindow = createMainWindow()
+			mainWindow = createMainWindow();
 		}
-	})
+	});
 
 	// create main BrowserWindow when electron is ready
 	app.on('ready', () => {
 		mainWindow = createMainWindow();
 	});
 
-	// ipcMain.on('alwaysOnTop', (event, onTop: boolean) => {
-	// 	if (mainWindow) {
-	// 		mainWindow.setAlwaysOnTop(onTop, 'floating', 1);
-	// 		mainWindow.setVisibleOnAllWorkspaces(true);
-	// 		mainWindow.setFullScreenable(false);
-	// 	}
-	// });
-
-	ipcMain.on('shortcut', (event, val) => {
-		event.returnValue = false;
-		// console.log('register', val);
-		// globalShortcut.unregisterAll();
-		// event.returnValue = globalShortcut.register(val!, () => {
-		// 	console.log("push-to-talk");
-		// })
-	});
-
 	ipcMain.on('toggleOverlay', (_: any, on: boolean) => {
-		if (mainWindow === null) return;
+		if (!mainWindow) return;
 		
-		if (on) {
-			mainWindow.setContentSize(defaultWidth, defaultHeight + 241)
-		} else {
-			mainWindow.setContentSize(defaultWidth, defaultHeight)
-		}
+		let height = on ? defaultHeight + 241 : defaultHeight;
+
+		if (height === mainWindow.getContentSize()[1]) return;
+
+		mainWindow.setContentSize(defaultWidth, height);
 	});
 }

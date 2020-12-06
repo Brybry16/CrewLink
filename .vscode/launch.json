@@ -1,0 +1,19 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Attach to Main (Port 5858)",
+            "type": "node",
+            "request": "attach",
+            "port": 5858,
+            "sourceMaps": true
+        },
+        {
+            "name": "Attach to Renderer (Port 9222)",
+            "type": "chrome",
+            "request": "attach",
+            "port": 9222,
+            "sourceMaps": false
+        }
+    ]
+}

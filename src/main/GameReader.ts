@@ -186,7 +186,6 @@ export default class GameReader {
 
 			let exiledPlayerId = this.readMemory<number>('byte', this.gameAssembly.modBaseAddr, this.offsets.exiledPlayerId);
 			let impostors = 0, crewmates = 0;
-
 			
 			const localPlayerId = this.readMemory<number>('byte', this.gameAssembly.modBaseAddr, this.offsets.localPlayerId);
 
@@ -241,7 +240,7 @@ export default class GameReader {
 			}
 			this.lastState = newState;
 			this.oldGameState = state;
-		} else {
+		} else if (this.lastState?.gameState !== undefined && this.lastState?.gameState !== GameState.UNKNOWN) {
 			let newState = {
 				lobbyCode: this.gameCode,
 				players: [],
@@ -252,14 +251,8 @@ export default class GameReader {
 				isCommsSabotaged: false,
 				viewingCameras: 0
 			};
-			let patch = patcher.diff(this.lastState, newState);
-			if (patch) {
-				try {
-					this.reply('gameState', newState);
-				} catch (e) {
-					process.exit(0);
-				}
-			}
+			this.reply('gameState', newState);
+			this.lastState = newState;
 		}
 	}
 

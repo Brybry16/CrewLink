@@ -1,6 +1,6 @@
 {
   "name": "crewlinkplus",
-  "version": "1.2.4-TheCrew",
+  "version": "1.2.5-TheCrew",
   "license": "GPL-3.0-or-later",
   "description": "Free, open, Among Us proximity voice chat",
   "repository": {
@@ -31,6 +31,7 @@
     "publish": "yarn compile && electron-builder --win --x64 --publish always"
   },
   "dependencies": {
+    "ajv": "^6.12.6",
     "analyser-frequency-average": "^1.0.0",
     "audio-activity": "^1.0.0",
     "axios": "^0.21.0",

@@ -1,4 +1,4 @@
-#settings {
+#settings, #lobby-settings {
 	transition: transform .2s ease-in;
 	width: 100vw;
 	height: 100vh;
@@ -12,13 +12,14 @@
 	flex-direction: column;
 	justify-content: start;
 	align-items: center;
-	padding-top: 20px;
+	/*padding-top: 26px;*/
+	padding-top: 4px;
+	margin-top: 24px;
 }
 
-#lobby-settings {
+/*#lobby-settings {
 	width: 100vw;
 	height: 100vh;
-	/*position: absolute;*/
 	top: 0;
 	left:0;
 	z-index: 10;
@@ -26,34 +27,50 @@
 	flex-direction: column;
 	justify-content: start;
 	align-items: center;
-	/*padding-top: 20px;*/
-}
+}*/
 
 .form-control {
 	user-select: none;
 }
 
-.form-control.l {
+/*.form-control.l {
 	display: flex;
 	flex-direction: column;
 	text-align: center;
-}
+}*/
 
 label {
-	margin-bottom: 5px;
+	margin-bottom: 2px;
+	text-align: center;
+	font-size: 14px;
 }
 
-.form-control.m {
-	margin-bottom: 10px;
+#read-only {
+	font-weight: bold;
+}
+
+/*.titlebar {
+	position: absolute;
+	width: 100vw;
+	height: 24px;
+	background-color: #31353b;
+	top: 0;
+	-webkit-app-region: drag;
 }
 
 .titlebar-button.back {
+	-webkit-app-region: no-drag;
 	right: 2px;
 	transition: transform .1s linear;
-}
+}*/
 
 .titlebar-button.back:hover {
 	transform: translateX(-1px);
+}
+
+
+.form-control.m .input-error {
+	border-color: #b00020
 }
 
 input[type="text"] {
@@ -63,29 +80,31 @@ input[type="text"] {
 	color: white;
 	padding: 5px;
 	border-radius: 5px;
+	width: calc(100% - 12px);
 }
 input[type="text"]:focus {
 	border-color: white;
 }
 
-input[type="checkbox"] {
-	margin-right: 8px;
+input[type="checkbox"], input[type="radio"] {
+	margin-right: 6px;
 }
 
-.fader-holder {
+/*.fader-holder {
 	width: 60px;
 	height: 80px;
-}
+}*/
 
 .fader {
 	overflow: hidden;
-	width: 80px;
+	width: calc(100% - 2px);
 	height: 20px;
 	-webkit-appearance: none;
 	background-color: #222;
-	transform: rotate(-90deg) translate(-20px);
+	transform: translate(0px);
 	border: 1px solid rgba(255, 255, 255, 0.5);
 	border-radius: 4px;
+	margin: 0px;
 }
 
 .fader:focus {
@@ -122,15 +141,29 @@ select {
 	color: white;
 	padding: 5px;
 	border-radius: 5px;
-	max-width: 240px;
+	width: 100%;
+	margin: 0px;
 }
 
 .settings-scroll {
-	overflow-y: auto;
-	height: calc(100vh - 20px);
-	display: flex;
+	/* overflow-y: auto; */
+	overflow-y: scroll;
+	height: calc(100vh - 26px);
+	width: calc(100% - 4px);
+	/*display: flex;
 	flex-direction: column;
-	justify-content: start;
+	justify-content: start;*/
 	align-items: center;
-	padding-right: 5px;
+	/* padding-right: 5px; */
+	/*margin-right: 6px;*/
+	margin-bottom: 26px;
+	padding-bottom: 4px;
+}
+
+.settings-scroll>* {
+	margin: 0px 6px 4px 4px;
+}
+
+.form-control.m {
+	margin-bottom: 2px;
 }

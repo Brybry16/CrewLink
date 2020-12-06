@@ -1,14 +1,14 @@
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import io, { Socket } from 'socket.io-client';
 import Avatar from './Avatar';
-import { GameStateContext, SettingsContext } from './App';
+import { GameStateContext, SettingsContext, LobbySettingsContext } from './App';
 import { AmongUsState, GameState, MapType, Player } from '../main/GameReader';
 import Peer from 'simple-peer';
 import { ipcRenderer, remote } from 'electron';
 import VAD from './vad';
 import { ISettings } from './Settings';
 import * as Maps from './Maps';
-import LobbySettings, { ILobbySettings } from './LobbySettings';
+import { ILobbySettings, VoiceDistanceModel } from './LobbySettings';
 
 interface PeerConnections {
 	[peer: string]: Peer.Instance;
@@ -64,6 +64,7 @@ interface OtherDead {
 function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Player, other: Player, audio: PeerAudio, lobbySettings: ILobbySettings): void {
 	const audioContext = audio.pan.context;
 	audio.pan.positionZ.setValueAtTime(-0.5, audioContext.currentTime);
+
 	let panPos: Array<number>;
 	const dist = distSq(me.x, me.y, other.x, other.y);
 	if (state.gameState === GameState.DISCUSSION || state.gameState === GameState.LOBBY) {
@@ -78,15 +79,17 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 			panPos = [0, Math.sqrt(dist)];
 		}
 	}
+
 	const maxDist = 6 * 6;
 	let g: number;
 	let gCams = 0;
+	let distanceModel = lobbySettings?.voiceDistanceModel ?? VoiceDistanceModel.Linear;
 	if (state.gameState === GameState.LOBBY) {
 		g = 1;
 	} else if (state.gameState === GameState.MENU) {
 		g = 0;
 	} else if (other.inVent) {
-		g = me.inVent && lobbySettings.impostorVentChat ? 1 : 0;
+		g = me.inVent && lobbySettings?.impostorVentChat ? 1 : 0;
 	} else if (other.isDead) {
 		g = me.isDead && dist <= maxDist ? 1 : 0;
 	} else if (state.gameState === GameState.DISCUSSION) {
@@ -104,26 +107,34 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 				map = Maps.Polus;
 				break;
 		}
+
 		if (dist > maxDist) {
 			g = 0;
 		} else if (me.isDead) {
 			g = 1;
-		} else if (state.isCommsSabotaged && lobbySettings.commsSabotageVoice) {
+		} else if (state?.isCommsSabotaged && lobbySettings?.commsSabotageVoice) {
 			g = 0;
 		} else {
 			g = 1 - map.blocked(state, me.x, me.y, other.x, other.y);
-			if (g === 1 && me.inVent) {
+			if (g === 1 && me.inVent && !other.inVent) { // Muffle audio from players outside the vent
 				g = 0.5;
 			}
+			else if (g === 0 && lobbySettings?.wallObstructedVolume) {
+				//g = lobbySettings?.wallObstructedVolume === 0.5 ? 0.49 : lobbySettings?.wallObstructedVolume;
+				g = lobbySettings?.wallObstructedVolume ?? 0;
+			}
 		}
+
 		if (g < 1 && !state.isCommsSabotaged && state.viewingCameras !== 0) {
 			const r = 3;
 			for (let i = 0; i < map.cameras.length; i++) {
 				if ((state.viewingCameras & (1 << i)) === 0) continue;
+				
 				const cam = map.cameras[i];
 				const dist = distSq(cam[0], cam[1], other.x, other.y);
 				if (dist < r * r) {
 					gCams = 1 - Math.sqrt(dist) / r;
+
 					break;
 				}
 			}
@@ -131,27 +142,47 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 	} else {
 		g = 1;
 	}
+
 	if (gCams !== 0 && audio.camsGain.gain.value < 1) {
 		audio.camsGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.1);
+		audio.camsGain.gain.value = 1;
 	} else if (gCams === 0 && audio.camsGain.gain.value > 0) {
 		audio.camsGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.015);
+		audio.camsGain.gain.value = 0;
 	}
+
 	if (g === 0.5) {
-		audio.muffledGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.015);
+		/*audio.muffledGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.015);
+		audio.muffledGain.gain.value = 1;*/
+		let muffle = distanceModel === VoiceDistanceModel.Exponential ? 0.25 : 1;
+		audio.muffledGain.gain.setTargetAtTime(muffle, audioContext.currentTime, 0.015);
+		audio.muffledGain.gain.value = muffle;
+
 		audio.gain.gain.setTargetAtTime(0, audioContext.currentTime, 0.015);
+		audio.gain.gain.value = 0;
 	} else {
 		if (audio.muffledGain.gain.value > 0) {
 			audio.muffledGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.015);
+			audio.muffledGain.gain.value = 0;
 		}
+
 		audio.gain.gain.setTargetAtTime(g, audioContext.currentTime, 0.015);
+		audio.gain.gain.value = g;
 	}
+
 	if (g > 0) {
 		if (isNaN(panPos[0])) panPos[0] = 999;
 		if (isNaN(panPos[1])) panPos[1] = 999;
+
 		panPos[0] = Math.min(999, Math.max(-999, panPos[0]));
 		panPos[1] = Math.min(999, Math.max(-999, panPos[1]));
+
 		audio.pan.positionX.setValueAtTime(panPos[0], audioContext.currentTime);
 		audio.pan.positionY.setValueAtTime(panPos[1], audioContext.currentTime);
+
+		audio.pan.distanceModel = distanceModel === VoiceDistanceModel.Linear ? 'linear' : 'exponential';
+		audio.pan.maxDistance = lobbySettings?.voiceRadius ?? 2.4;
+		//audio.gain.gain.value = audio.gain.gain.value + (lobbySettings?.voiceRadius ?? 2.4 - 0.5) / 1.9;
 	}
 }
 
@@ -195,7 +226,10 @@ function createSecuritySpeaker(context: AudioContext, destination: AudioNode = c
 
 export default function Voice() {
 	const [settings] = useContext(SettingsContext);
-	const [lobbySettings, setLobbySettings] = useState<ILobbySettings>({});
+	//const [lobbySettings, setLobbySettings] = useState<ILobbySettings>({});
+	//const [lobbySettings] = useContext(LobbySettingsContext);
+	let [lobbySettings, setLobbySettings] = useContext(LobbySettingsContext);
+	//let [lobbySettings] = useContext(LobbySettingsContext);
 	const settingsRef = useRef<ISettings>(settings);
 	const gameState = useContext(GameStateContext);
 	let { lobbyCode: displayedLobbyCode } = gameState;
@@ -257,7 +291,7 @@ export default function Voice() {
 	}, [gameState.gameState]);
 
 	// const [audioOut.ctx] = useState<audioOut.ctx>(() => new audioOut.ctx());
-	const connectionStuff = useRef<ConnectionStuff>({ pushToTalk: settings.pushToTalk, deafened: false } as any);
+	const connectionStuff = useRef<ConnectionStuff>({ pushToTalk: settings.pushToTalk, pressingPushToTalk: false, deafened: false, muted: false, deadDeafened: false, livingDeafened: false } as any);
 	useEffect(() => {
 		if (connectionStuff.current.gain) {
 			connectionStuff.current.gain.gain.value = settings.microphoneGain;
@@ -303,95 +337,110 @@ export default function Voice() {
 			});
 		}
 
-		//function checkMicMute(pressing: boolean = false) {
-			function checkMicMute(sourceDeafen: boolean = false) {
-				if (!myPlayer?.isDead) {
-					connectionStuff.current.deadDeafened = false;
-					connectionStuff.current.livingDeafened = false;
-				}
-	
-				if (!connectionStuff.current.deafened && connectionStuff.current.deadDeafened && connectionStuff.current.livingDeafened || // if both living and dead are deafened, switch to full deafen
-				connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened) && sourceDeafen) { // if dead or living are deafened and full deafen is pressed, remove other deafens
-					connectionStuff.current.deafened = true;
-					connectionStuff.current.deadDeafened = false;
-					connectionStuff.current.livingDeafened = false;
-				}
-				else if (connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened)) { // if full deafened and dead or living deafen are pressed, exit full deafen and deafen living or dead respectively
-					connectionStuff.current.deafened = false;
-					connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
-					connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
-				}
-	
-				if (!connectionStuff.current.stream) return;
-	
-				if (settings.pushToTalk) {
-					connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && connectionStuff.current.pressingPushToTalk;
-				}
-				else {
-					connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && !connectionStuff.current.muted;
-				}
-	
-				setDeafened(connectionStuff.current.deafened);
-				setMuted(connectionStuff.current.muted);
-				setDeadDeafened(connectionStuff.current.deadDeafened);
-				setLivingDeafened(connectionStuff.current.livingDeafened);
+		function checkMicMute(source: number = 0) {
+			if (!myPlayer?.isDead/* || gameState?.gameState !== GameState.DISCUSSION && gameState?.gameState !== GameState.TASKS*/) {
+				connectionStuff.current.deadDeafened = false;
+				connectionStuff.current.livingDeafened = false;
 			}
-	
-			const toggleDeafen = () => {
-				connectionStuff.current.deafened = !connectionStuff.current.deafened;
-				checkMicMute(true);
-			};
-	
-			const toggleMute = () => {
-				connectionStuff.current.muted = !connectionStuff.current.muted;
-				checkMicMute();
-			};
-			const toggleDeafenDead = () => {
-				if (!myPlayer?.isDead) {
-					return;
-				}
+
+			if (!connectionStuff.current.deafened && connectionStuff.current.deadDeafened && connectionStuff.current.livingDeafened || // if both living and dead are deafened, switch to full deafen
+			connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened) && source === 1) { // if dead or living are deafened and full deafen is pressed, remove other deafens
+				connectionStuff.current.deafened = true;
+				connectionStuff.current.deadDeafened = false;
+				connectionStuff.current.livingDeafened = false;
+			}
+			else if (connectionStuff.current.deafened && (connectionStuff.current.deadDeafened || connectionStuff.current.livingDeafened)) { // if full deafened and dead or living deafen are pressed, exit full deafen and deafen living or dead respectively
+				connectionStuff.current.deafened = false;
 				connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
-				checkMicMute();
-			};
-			const toggleDeafenLiving = () => {
-				if (!myPlayer?.isDead) {
-					return;
-				}
 				connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
-				checkMicMute();
-			};
-			const pushToTalk = (_: any, pressing: boolean) => {
-				/*if (!connectionStuff.current.pushToTalk) return;
-				if (!connectionStuff.current.deafened) {
-					stream.getAudioTracks()[0].enabled = pressing;
-				}*/
-				connectionStuff.current.pressingPushToTalk = pressing;
-				checkMicMute();
-				// console.log(stream.getAudioTracks()[0].enabled);
-			};
-	
-			let playerCount = gameState?.players?.length;
-			const gameStateUpdate = (_: any, newState: AmongUsState) => {
-				checkMicMute();
-	
-				if (playerCount !== newState.players.length && newState.lobbyCode !== 'MENU') {
-					playerCount = newState.players.length;
-	
-					socket.emit('lobbyPlayerCount', newState.lobbyCode, playerCount);
-				}
-			};
-	
-			ipcRenderer.on('toggleDeafen', toggleDeafen);
-			ipcRenderer.on('toggleMute', toggleMute);
-			ipcRenderer.on('toggleDeafenDead', toggleDeafenDead);
-			ipcRenderer.on('toggleDeafenLiving', toggleDeafenLiving);
-			ipcRenderer.on('pushToTalk', pushToTalk);
-			ipcRenderer.on('gameState', gameStateUpdate);
+			}
+
+			if (connectionStuff.current.deafened && source === 2) { // If deafened and toggling mute, undo deafen and mute.
+				connectionStuff.current.deafened = false;
+				connectionStuff.current.muted = false;
+			}
+
+			if (!connectionStuff.current.stream) return;
+
+			if (settings.pushToTalk) {
+				connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && connectionStuff.current.pressingPushToTalk;
+			}
+			else {
+				connectionStuff.current.stream.getAudioTracks()[0].enabled = !connectionStuff.current.deafened && (!myPlayer?.isDead || !connectionStuff.current.deadDeafened) && !connectionStuff.current.muted;
+			}
+
+			setDeafened(connectionStuff.current.deafened);
+			setMuted(connectionStuff.current.muted);
+			setDeadDeafened(connectionStuff.current.deadDeafened);
+			setLivingDeafened(connectionStuff.current.livingDeafened);
+		}
+
+		const toggleDeafen = () => {
+			connectionStuff.current.deafened = !connectionStuff.current.deafened;
+			checkMicMute(1);
+
+			for (let s of Object.keys(lobbySettings)) {
+				console.log(`lobbySetting curr: ${s} - ${lobbySettings[s]}`);
+			}
+		};
+
+		const toggleMute = () => {
+			connectionStuff.current.muted = !connectionStuff.current.muted;
+			checkMicMute(2);
+		};
+		const toggleDeafenDead = () => {
+			if (!myPlayer?.isDead/* || gameState?.gameState !== GameState.DISCUSSION && gameState?.gameState !== GameState.TASKS*/) {
+				return;
+			}
+			connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
+			checkMicMute();
+		};
+		const toggleDeafenLiving = () => {
+			if (!myPlayer?.isDead/* || gameState?.gameState !== GameState.DISCUSSION && gameState?.gameState !== GameState.TASKS*/) {
+				return;
+			}
+			connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
+			checkMicMute();
+		};
+		const pushToTalk = (_: any, pressing: boolean) => {
+			/*if (!connectionStuff.current.pushToTalk) return;
+			if (!connectionStuff.current.deafened) {
+				stream.getAudioTracks()[0].enabled = pressing;
+			}*/
+			connectionStuff.current.pressingPushToTalk = pressing;
+			checkMicMute();
+			// console.log(stream.getAudioTracks()[0].enabled);
+		};
+
+		let playerCount = gameState?.players?.length;
+		const gameStateUpdate = (_: any, newState: AmongUsState) => {
+			checkMicMute();
+
+			if (playerCount !== newState.players.length && newState.lobbyCode !== 'MENU') {
+				playerCount = newState.players.length;
+
+				socket.emit('lobbyPlayerCount', newState.lobbyCode, playerCount);
+			}
+		};
+
+		const lobbySettingUpdate = (setting: any, value: any) => {
+			console.log(`lobbySettingUpdate: ${setting} - ${value}`);
+			socket.emit('setLobbySetting', setting, value);
+		};
+
+		ipcRenderer.on('toggleDeafen', toggleDeafen);
+		ipcRenderer.on('toggleMute', toggleMute);
+		ipcRenderer.on('toggleDeafenDead', toggleDeafenDead);
+		ipcRenderer.on('toggleDeafenLiving', toggleDeafenLiving);
+		ipcRenderer.on('pushToTalk', pushToTalk);
+		ipcRenderer.on('gameState', gameStateUpdate);
+		ipcRenderer.on('lobbySettingUpdate', lobbySettingUpdate);
 	
 		openMic(async (stream) => {
 			connectionStuff.current.stream = stream;
-			
+
 			const peerConnections: PeerConnections = {};
+
 			audioElements.current = {};
 
 			const audioTrack = stream.getAudioTracks()[0];
@@ -401,8 +450,9 @@ export default function Voice() {
 			checkMicMute();
 
 			audioTrack.addEventListener('ended', () => {
-				remote.dialog.showMessageBox(remote.getCurrentWindow(),
+				remote.dialog.showMessageBox(
 					{
+						type: 'error',
 						title: 'Audio Disconnected',
 						message: 'The current audio device was disconnected, choose \'Reload\' once reconnected or switch to different device.',
 						buttons: ['Change settings', 'Reload'],
@@ -453,14 +503,20 @@ export default function Voice() {
 
 			const connect = (lobbyCode: string, playerId: number) => {
 				socket.emit('leave');
+
 				Object.keys(peerConnections).forEach(k => {
 					disconnectPeer(k);
 				});
+
 				setSocketPlayerIds({});
+
 				setJoinedLobby(lobbyCode);
+
 				if (lobbyCode === 'MENU') return;
+
 				socket.emit('join', lobbyCode, playerId);
 				socket.emit('lobbyPlayerCount', lobbyCode, gameState?.players?.length ?? 1);
+				
 				console.log(`Joining lobby ${lobbyCode}: ${playerId}`);
 			};
 
@@ -497,9 +553,11 @@ export default function Voice() {
 					let pan = audioOut.ctx.createPanner();
 					pan.refDistance = 0.1;
 					pan.panningModel = 'equalpower';
-					pan.distanceModel = 'linear'; //exponential
+					/*pan.distanceModel = 'linear'; //exponential
 					//pan.maxDistance = 2.66 * 2;
-					pan.maxDistance = 2.4;
+					pan.maxDistance = 2.4;*/
+					pan.distanceModel = lobbySettings?.voiceDistanceModel ?? VoiceDistanceModel.Linear === VoiceDistanceModel.Linear ? 'linear' : 'exponential';
+					pan.maxDistance = lobbySettings?.voiceRadius ?? 2.4;
 					pan.rolloffFactor = 1;
 
 					source.connect(pan);
@@ -541,17 +599,21 @@ export default function Voice() {
 						to: peer
 					});
 				});
-				connection.on('error', (error: any) => {
-					console.log(error);
-					if (initiator) {
-						if (error.code !== 'ERR_WEBRTC_SUPPORT' &&
-								error.code !== 'ERR_SIGNALING' &&
-								error.code !== 'ERR_DATA_CHANNEL') {
+				connection.on('error', (e: any) => {
+					console.log(e);
+					if (initiator && e.code !== 'ERR_DATA_CHANNEL') {
+						if (e.code !== 'ERR_WEBRTC_SUPPORT' && e.code !== 'ERR_SIGNALING') {
 							setTimeout(() => {
 								createPeerConnection(peer, true);
 							}, 500 + Math.random() * 3000 | 0);
 						} else {
-							remote.dialog.showErrorBox('Connection Error', `A voice connection error occurred: ${error.name}\n\n${error.message}`);
+							remote.dialog.showMessageBox(
+								{
+									type: 'error',
+									title: 'Connection Error',
+									message: `A voice connection error occurred: ${e.error.name}\n\n${e.error.message}`
+								}
+							);
 						}
 					}
 				});
@@ -561,15 +623,18 @@ export default function Voice() {
 				});
 				return connection;
 			}
+
 			socket.on('join', async (peer: string, playerId: number) => {
 				setSocketPlayerIds(old => ({ ...old, [peer]: playerId }));
 			});
+
 			socket.on('signal', ({ data, from }: any) => {
 				let connection: Peer.Instance;
 				if (peerConnections[from] && !peerConnections[from].destroyed) connection = peerConnections[from];
 				else connection = createPeerConnection(from, false);
 				connection.signal(data);
 			});
+
 			socket.on('setId', (socketId: string, id: number) => {
 				setSocketPlayerIds(old => ({ ...old, [socketId]: id }));
 			})
@@ -583,18 +648,28 @@ export default function Voice() {
 			socket.on('setIds', (ids: SocketIdMap) => {
 				setSocketPlayerIds(ids);
 			});
-			socket.on('lobbySetting', (setting: string, value: any) => {
-				console.log(`lobbySetting: ${setting} - ${value}`);
 
-				setLobbySettings(old => ({ ...old, [setting]: value }));
+			socket.on('lobbySetting', (setting: string, value: any) => {
+				//console.log(`lobbySetting: ${setting} - ${value}`);
+
+				setLobbySettings((old: [ILobbySettings]) => ({ ...old, [setting]: value }));
+				lobbySettings[setting] = value;
+
+				//console.log(`lobbySetting set: ${setting} - ${lobbySettings[setting]} ${Object.keys(lobbySettings)}`);
 			});
 			socket.on('lobbySettings', (settings: ILobbySettings) => {
 				//console.log(`lobbySettings: ${Object.keys(settings)}`);
-				for (let s of Object.keys(settings)) {
+				/*for (let s of Object.keys(settings)) {
 					console.log(`lobbySetting: ${s} - ${settings[s]}`);
-				}
+				}*/
 
 				setLobbySettings(settings);
+				lobbySettings = settings;
+
+				/*console.log(`lobbySettings set: ${Object.keys(lobbySettings)}`);
+				for (let s of Object.keys(lobbySettings)) {
+					console.log(`lobbySetting set: ${s} - ${lobbySettings[s]}`);
+				}*/
 			});
 		});
 
@@ -609,6 +684,7 @@ export default function Voice() {
 			ipcRenderer.off('toggleDeafenLiving', toggleDeafenLiving);
 			ipcRenderer.off('pushToTalk', pushToTalk);
 			ipcRenderer.off('gameState', gameStateUpdate);
+			ipcRenderer.off('lobbySettingUpdate', lobbySettingUpdate);
 		}
 	}, []);
 
@@ -638,12 +714,6 @@ export default function Voice() {
 		return otherPlayers;
 	}, [gameState, socketPlayerIds]);
 
-	useEffect(() => {
-		if (connect?.connect && gameState.lobbyCode && myPlayer?.id !== undefined) {
-			connect.connect(gameState.lobbyCode, myPlayer.id);
-		}
-	}, [connect?.connect, gameState?.lobbyCode]);
-
 	// useEffect(() => {
 	// 	if (connect?.connect && gameState.lobbyCode && myPlayer?.id !== undefined && gameState.gameState === GameState.LOBBY && (gameState.oldGameState === GameState.DISCUSSION || gameState.oldGameState === GameState.TASKS)) {
 	// 		connect.connect(gameState.lobbyCode, myPlayer.id);
@@ -651,16 +721,17 @@ export default function Voice() {
 	// }, [gameState.gameState]);
 
 	useEffect(() => {
-		if (myPlayer?.id === undefined) return;
+		if (myPlayer?.id === undefined || connected !== true) return;
+		
 		if (connectionStuff.current.socket) {
 			connectionStuff.current.socket.emit('id', myPlayer.id);
 		}
-
+		
 		const code = gameState?.lobbyCode;
 		if (connect?.connect && code && code !== joinedLobby) {
-			connect.connect(gameState.lobbyCode, myPlayer.id);
+			connect.connect(code, myPlayer.id);
 		}
-	}, [connect?.connect, myPlayer?.id]);
+	}, [connect?.connect, myPlayer?.id, gameState?.lobbyCode, connected]);
 
 	useEffect(() => {
 		if (myPlayer?.id === undefined || !connect?.initiatePeer) return;
@@ -681,10 +752,10 @@ export default function Voice() {
 		let p1Dead = otherDead[p1.id], p2Dead = otherDead[p2.id]
 		if(p1Dead || p2Dead) return p1Dead && !myPlayer?.isDead ? 1 : -1;
 
-		if (overlayMode) return 0;
+		/*if (overlayMode) return 0;
 
 		let p1Talking = otherTalking[p1.id], p2Talking = otherTalking[p2.id]
-		if(p1Talking || p2Talking) return p1Talking ? -1 : 1;
+		if(p1Talking || p2Talking) return p1Talking ? -1 : 1;*/
 
 		return 0;
 	});
@@ -720,10 +791,6 @@ export default function Voice() {
 				</div>
 			</div>
 			<hr />
-			{
-				gameState?.gameState === GameState.LOBBY && otherPlayers.length == 0 &&
-				<LobbySettings socket={connectionStuff.current.socket} lobbySettings={lobbySettings}/>
-			}
 			<div className="otherplayers-container">
 				<div className="otherplayers">
 					{
