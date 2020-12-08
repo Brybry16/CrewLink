@@ -25,17 +25,21 @@ const store = new Store<ISettings>({
 			type: 'string',
 			default: 'Default'
 		},
+		inputGain: {
+			type: 'number',
+			default: 1
+		},
 		speaker: {
 			type: 'string',
 			default: 'Default'
 		},
+		outputGain: {
+			type: 'number',
+			default: 1
+		},
 		pushToTalk: {
 			type: 'boolean',
 			default: false,
-		},
-		microphoneGain: {
-			type: 'number',
-			default: 1
 		},
 		server: {
 			type: 'string',
@@ -98,8 +102,9 @@ export interface SettingsProps {
 export interface ISettings {
 	alwaysOnTop: boolean;
 	microphone: string;
-	microphoneGain: number,
+	inputGain: number,
 	speaker: string;
+	outputGain: number,
 	pushToTalk: boolean;
 	server: string;
 	pushToTalkShortcut: string;
@@ -157,7 +162,6 @@ function URLInput({ initialURL, onValidURL }: URLInputProps) {
 			setURLValid(false);
 		}
 	}
-
 
 	return <input className={isValidURL ? '' : 'input-error'} spellCheck={false} type="text" value={currentURL} onChange={onChange}/>
 }
@@ -219,13 +223,14 @@ export default function Settings({ open/*, onClose*/ }: SettingsProps) {
 		}
 	};
 
-	const micFader = useRef<HTMLInputElement>(null);
-	const [ micGainNode, setMicGainNode ] = useState<GainNode>();
+	const inputFader = useRef<HTMLInputElement>(null);
+	const [ inputGainNode, setInputGainNode ] = useState<GainNode>();
 	useEffect(() => {
-		if (micGainNode) {
-			micGainNode.gain.value = settings.microphoneGain;
+		if (inputGainNode) {
+			inputGainNode.gain.value = settings.inputGain;
 		}
-	}, [ settings.microphoneGain ]);
+	}, [ settings.inputGain ]);
+
 	useEffect(() => {
 		if (!open) return;
 		let monitorNode: AudioNode;
@@ -239,8 +244,11 @@ export default function Settings({ open/*, onClose*/ }: SettingsProps) {
 			const ac = new AudioContext();
 			const source = ac.createMediaStreamSource(stream);
 			const gain = ac.createGain();
-			gain.gain.value = settings.microphoneGain;
+
+			gain.gain.value = settings.inputGain;
+
 			source.connect(gain);
+
 			const monitor = ac.createScriptProcessor(1024, 1, 1);
 			let peak = 0;
 			monitor.onaudioprocess = e => {
@@ -249,12 +257,15 @@ export default function Settings({ open/*, onClose*/ }: SettingsProps) {
 				for (let i = 0; i < data.length; i++) {
 					peak = Math.max(peak, Math.abs(data[i]));
 				}
-				micFader.current?.style.setProperty('--audio-level', (100 * peak / (+micFader.current?.max) | 0) + '%');
+				inputFader.current?.style.setProperty('--audio-level', (100 * peak / (+inputFader.current?.max) | 0) + '%');
 			};
+
 			gain.connect(monitor);
+
 			monitor.connect(ac.destination);
 			monitorNode = monitor;
-			setMicGainNode(gain);
+
+			setInputGainNode(gain);
 		}, error => {
 			console.log(error);
 			remote.dialog.showErrorBox('Error', 'Couldn\'t connect to your microphone:\n' + error);
@@ -295,10 +306,10 @@ export default function Settings({ open/*, onClose*/ }: SettingsProps) {
 		</div>*/}
 		<div className="settings-scroll">
 			<div className="form-control m l" style={{ color: '#e74c3c' }}>
-				<label>Microphone</label>
+				<label>Microphone (volume: {Math.round(settings.inputGain * 100)}%)</label>
 				<div className="fader-holder">
-					<input ref={micFader} className="fader" type="range" min="0" max="2" step="0.05" list="volsettings" value={settings.microphoneGain} onChange={(ev) => setSetting('microphoneGain', +ev.currentTarget.value)}/>
-					<datalist id="volsettings">
+					<input ref={inputFader} className="fader" type="range" min="0" max="2" step="0.01" list="volSettings" value={settings.inputGain} onChange={(ev) => setSetting('inputGain', +ev.currentTarget.value)}/>
+					<datalist id="volSettings">
 						<option>1</option>
 					</datalist>
 				</div>
@@ -311,7 +322,13 @@ export default function Settings({ open/*, onClose*/ }: SettingsProps) {
 				</select>
 			</div>
 			<div className="form-control m l" style={{ color: '#e67e22' }}>
-				<label>Speaker</label>
+				<label>Speaker (volume: {Math.round(settings.outputGain * 100)}%)</label>
+				<div className="fader-holder">
+					<input type="range" min="0" max="2" step="0.01" list="volSettings" value={settings.outputGain} onChange={(ev) => setSetting('outputGain', +ev.currentTarget.value)}/>
+					<datalist id="volSettings">
+						<option>1</option>
+					</datalist>
+				</div>
 				<select value={settings.speaker} onChange={(ev) => setSetting('speaker', speakers[ev.target.selectedIndex].id)} onClick={() => updateDevices()}>
 					{
 						speakers.map(d => 

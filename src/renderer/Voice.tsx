@@ -9,6 +9,7 @@ import VAD from './vad';
 import { ISettings } from './Settings';
 import * as Maps from './Maps';
 import { ILobbySettings, VoiceDistanceModel } from './LobbySettings';
+import { ObstructionType } from './Ship';
 
 interface PeerConnections {
 	[peer: string]: Peer.Instance;
@@ -16,9 +17,12 @@ interface PeerConnections {
 interface PeerAudio {
 	element: HTMLAudioElement;
 	gain: GainNode;
+	gainTarget: number;
 	pan: PannerNode;
-	camsGain: GainNode;
 	muffledGain: GainNode;
+	muffledGainTarget: number;
+	camsGain: GainNode;
+	camsGainTarget: number;
 }
 interface AudioElements {
 	[peer: string]: PeerAudio;
@@ -61,13 +65,13 @@ interface OtherDead {
 // 	return clamp((n - oldLow) / (oldHigh - oldLow) * (newHigh - newLow) + newLow, newLow, newHigh);
 // }
 
-function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Player, other: Player, audio: PeerAudio, lobbySettings: ILobbySettings): void {
+function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Player, other: Player, audio: PeerAudio, outputGain: number, lobbySettings: ILobbySettings): void {
 	const audioContext = audio.pan.context;
 	audio.pan.positionZ.setValueAtTime(-0.5, audioContext.currentTime);
 
 	let panPos: Array<number>;
 	const dist = distSq(me.x, me.y, other.x, other.y);
-	if (state.gameState === GameState.DISCUSSION || state.gameState === GameState.LOBBY) {
+	if (state.gameState === GameState.DISCUSSION/* || state.gameState === GameState.LOBBY*/) {
 		panPos = [0, 0];
 	} else {
 		if (settings.stereo) {
@@ -80,20 +84,24 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 		}
 	}
 
-	const maxDist = 6 * 6;
-	let g: number;
+	let distanceModel = lobbySettings.voiceDistanceModel;
+
+	//const maxDist = 6 ** 2;
+	//const maxDist = (6 * (lobbySettings.voiceRadius / 2.4)) ** 2;
+	//const maxDist = (6 * distanceModel == VoiceDistanceModel.Linear ? 1 : (lobbySettings.voiceRadius / 2.4)) ** 2;
+	const maxDist = lobbySettings.voiceMaxDistance ** 2;
+
+	let g = state.gameState === GameState.MENU ? 0 : 1; // No voice if not in a match
 	let gCams = 0;
-	let distanceModel = lobbySettings?.voiceDistanceModel ?? VoiceDistanceModel.Linear;
-	if (state.gameState === GameState.LOBBY) {
-		g = 1;
-	} else if (state.gameState === GameState.MENU) {
+	let muffle = false;
+
+	/*if (state.gameState === GameState.MENU) { // No voice if not in a match
 		g = 0;
-	} else if (other.inVent) {
-		g = me.inVent && lobbySettings?.impostorVentChat ? 1 : 0;
-	} else if (other.isDead) {
-		g = me.isDead && dist <= maxDist ? 1 : 0;
-	} else if (state.gameState === GameState.DISCUSSION) {
+	} else if (state.gameState === GameState.LOBBY || state.gameState === GameState.DISCUSSION) { // Always voice during lobby or discussion
 		g = 1;
+	} else*/
+	if (state.gameState === GameState.DISCUSSION) { // Always voice during lobby or discussion
+		g = other.isDead && !me.isDead ? 0 : 1;
 	} else if (state.gameState === GameState.TASKS) {
 		let map = Maps.Empty;
 		switch (state.map) {
@@ -108,24 +116,42 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 				break;
 		}
 
-		if (dist > maxDist) {
+		let obstruction = ObstructionType.None;
+
+		//console.log(`${other.name} ${other.inVent && (!me.inVent && !me.isDead || !lobbySettings.impostorVentChat)}`)
+		if (dist > maxDist) { // Beyond max distance
+			const scale = dist / maxDist - 1;
+			g = scale < 0.2 ? 1 - scale * 5 : 0; // Todo: Make cutoff less abrupt
+		} else if (other.isDead && !me.isDead || // Mute ghosts if not dead
+		other.inVent && (!me.inVent && !me.isDead || !lobbySettings.impostorVentChat) || // Other is in vent and current player isn't (dead) or in vent, or vent chat is disabled
+		!me.isDead && state?.isCommsSabotaged && lobbySettings.commsSabotageVoice && (!other.isImpostor || !me.isImpostor)) { // Not dead and comms sabotage is active with comms sabotage disabling voice enabled, impostors can still hear and talk
 			g = 0;
-		} else if (me.isDead) {
-			g = 1;
-		} else if (state?.isCommsSabotaged && lobbySettings?.commsSabotageVoice) {
-			g = 0;
+		} else if (me.inVent && !other.inVent) {
+			muffle = true;
 		} else {
-			g = 1 - map.blocked(state, me.x, me.y, other.x, other.y);
+			/*g = 1 - map.blocked(state, me.x, me.y, other.x, other.y);
 			if (g === 1 && me.inVent && !other.inVent) { // Muffle audio from players outside the vent
 				g = 0.5;
 			}
-			else if (g === 0 && lobbySettings?.wallObstructedVolume) {
-				//g = lobbySettings?.wallObstructedVolume === 0.5 ? 0.49 : lobbySettings?.wallObstructedVolume;
-				g = lobbySettings?.wallObstructedVolume ?? 0;
+			else if (g === 0 && lobbySettings.wallObstructedVolume) {
+				//g = lobbySettings.wallObstructedVolume === 0.5 ? 0.49 : lobbySettings.wallObstructedVolume;
+				g = lobbySettings.wallObstructedVolume;
+			}*/
+
+			obstruction = map.blocked(state, me.x, me.y, other.x, other.y);
+
+			if (obstruction === ObstructionType.Window) {
+				muffle = lobbySettings.windowObstructedMuffle;
+				g = lobbySettings.windowObstructedVolume;
+			} else if (obstruction === ObstructionType.Wall || obstruction === ObstructionType.Door) {
+				muffle = lobbySettings.wallObstructedMuffle;
+				g = lobbySettings.wallObstructedVolume;
 			}
+
+			if (me.isDead) muffle = false;
 		}
 
-		if (g < 1 && !state.isCommsSabotaged && state.viewingCameras !== 0) {
+		if (/*g < 1*/(g === 0 || muffle) && !state.isCommsSabotaged && state.viewingCameras !== 0) {
 			const r = 3;
 			for (let i = 0; i < map.cameras.length; i++) {
 				if ((state.viewingCameras & (1 << i)) === 0) continue;
@@ -139,24 +165,31 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 				}
 			}
 		}
-	} else {
+	} /*else {
 		g = 1;
-	}
+	}*/
 
-	if (gCams !== 0 && audio.camsGain.gain.value < 1) {
-		audio.camsGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.1);
-		audio.camsGain.gain.value = 1;
+	let gainExponent = distanceModel === VoiceDistanceModel.Exponential ? lobbySettings.exponentialGain : 1;
+
+	g *= gainExponent * outputGain;
+
+	if (gCams !== 0/* && audio.camsGain.gain.value < 1*/ /*&& audio.camsGain.gain.value === 0*/ && audio.camsGain.gain.value < gainExponent) {
+		/*audio.camsGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.1);
+		audio.camsGain.gain.value = 1;*/
+		audio.camsGain.gain.setTargetAtTime(audio.camsGainTarget = gainExponent, audioContext.currentTime, 0.1);
+		//audio.camsGain.gain.value = gainExponent;
 	} else if (gCams === 0 && audio.camsGain.gain.value > 0) {
-		audio.camsGain.gain.setTargetAtTime(0, audioContext.currentTime, 0.015);
-		audio.camsGain.gain.value = 0;
+		audio.camsGain.gain.setTargetAtTime(audio.camsGainTarget = 0, audioContext.currentTime, 0.015);
+		//audio.camsGain.gain.value = 0;
 	}
 
-	if (g === 0.5) {
-		/*audio.muffledGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.015);
-		audio.muffledGain.gain.value = 1;*/
-		let muffle = distanceModel === VoiceDistanceModel.Exponential ? 0.25 : 1;
-		audio.muffledGain.gain.setTargetAtTime(muffle, audioContext.currentTime, 0.015);
-		audio.muffledGain.gain.value = muffle;
+	//if (g === 0.5) {
+	/*if (muffle) {
+		//audio.muffledGain.gain.setTargetAtTime(1, audioContext.currentTime, 0.015);
+		//audio.muffledGain.gain.value = 1;
+		let muffleGain = distanceModel === VoiceDistanceModel.Exponential ? 0.25 : 1;
+		audio.muffledGain.gain.setTargetAtTime(muffleGain, audioContext.currentTime, 0.015);
+		audio.muffledGain.gain.value = muffleGain;
 
 		audio.gain.gain.setTargetAtTime(0, audioContext.currentTime, 0.015);
 		audio.gain.gain.value = 0;
@@ -168,9 +201,26 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 
 		audio.gain.gain.setTargetAtTime(g, audioContext.currentTime, 0.015);
 		audio.gain.gain.value = g;
-	}
+	}*/
 
-	if (g > 0) {
+	let muffleGain = muffle ? g : 0;
+	g = muffle ? 0 : g;
+
+	if(audio.muffledGainTarget !== muffleGain) audio.muffledGain.gain.setTargetAtTime(audio.muffledGainTarget = muffleGain, audioContext.currentTime, 0.015);
+	//audio.muffledGain.gain.value = muffleGain;
+
+	/*if (audio.gain.gain.value === 1)
+	{
+		console.log('resetting gain');
+		audio.gain.gain.value = 0;
+	}*/
+
+	if(audio.gainTarget !== g) audio.gain.gain.setTargetAtTime(audio.gainTarget = g, audioContext.currentTime, 0.015);
+	//audio.gain.gain.value = g;
+
+	//console.log(audio.gain.gain);
+
+	if (g > 0 || audio.gain.gain.value > 0 || audio.muffledGain.gain.value > 0 || audio.camsGain.gain.value > 0 || audio.gainTarget > 0 || audio.muffledGainTarget > 0 || audio.camsGainTarget > 0) {
 		if (isNaN(panPos[0])) panPos[0] = 999;
 		if (isNaN(panPos[1])) panPos[1] = 999;
 
@@ -181,8 +231,9 @@ function calculateVoiceAudio(state: AmongUsState, settings: ISettings, me: Playe
 		audio.pan.positionY.setValueAtTime(panPos[1], audioContext.currentTime);
 
 		audio.pan.distanceModel = distanceModel === VoiceDistanceModel.Linear ? 'linear' : 'exponential';
-		audio.pan.maxDistance = lobbySettings?.voiceRadius ?? 2.4;
-		//audio.gain.gain.value = audio.gain.gain.value + (lobbySettings?.voiceRadius ?? 2.4 - 0.5) / 1.9;
+		audio.pan.maxDistance = lobbySettings.voiceRadius;// * 2;
+		//audio.pan.maxDistance = distanceModel == VoiceDistanceModel.Exponential ? lobbySettings.voiceRadius : 2.4;
+		//audio.gain.gain.value = audio.gain.gain.value + (lobbySettings.voiceRadius - 0.5) / 1.9;
 	}
 }
 
@@ -202,7 +253,7 @@ function createSecuritySpeaker(context: AudioContext, destination: AudioNode = c
 				curve[i] = (Math.PI + amount) * x / (Math.PI + amount * Math.abs(x));
 		}
 		return curve;
-	} 
+	}
 	const highshelf = context.createBiquadFilter();
 	highshelf.type = 'highshelf';
 	highshelf.frequency.value = 1800;
@@ -226,10 +277,7 @@ function createSecuritySpeaker(context: AudioContext, destination: AudioNode = c
 
 export default function Voice() {
 	const [settings] = useContext(SettingsContext);
-	//const [lobbySettings, setLobbySettings] = useState<ILobbySettings>({});
-	//const [lobbySettings] = useContext(LobbySettingsContext);
-	let [lobbySettings, setLobbySettings] = useContext(LobbySettingsContext);
-	//let [lobbySettings] = useContext(LobbySettingsContext);
+	const [lobbySettings, setLobbySettings] = useContext(LobbySettingsContext);
 	const settingsRef = useRef<ISettings>(settings);
 	const gameState = useContext(GameStateContext);
 	let { lobbyCode: displayedLobbyCode } = gameState;
@@ -244,19 +292,23 @@ export default function Voice() {
 	const audioOut = useMemo<({ctx: AudioContext, dest: AudioNode, cams: AudioNode, muffled: AudioNode })>(() => {
 		const ctx = new AudioContext();
 		const dest = ctx.destination;
+		
 		const compressor = ctx.createDynamicsCompressor();
 		compressor.threshold.value = -10;
 		compressor.ratio.value = 3;
 		compressor.attack.value = 0;
 		compressor.release.value = 0.25;
 		compressor.connect(dest);
+
 		const cams = createSecuritySpeaker(ctx, compressor);
 		cams.connect(compressor);
+
 		const muffled = ctx.createBiquadFilter();
 		muffled.type = 'lowpass';
 		muffled.frequency.value = 800;
 		muffled.Q.value = 1;
 		muffled.connect(compressor);
+
 		return { ctx, dest: compressor, cams, muffled };
 	}, []);
 
@@ -268,6 +320,7 @@ export default function Voice() {
 
 	useEffect(() => {
 		if (!connectionStuff.current.stream) return;
+
 		connectionStuff.current.stream.getAudioTracks()[0].enabled = !settings.pushToTalk;
 		connectionStuff.current.pushToTalk = settings.pushToTalk;
 	}, [settings.pushToTalk]);
@@ -292,11 +345,12 @@ export default function Voice() {
 
 	// const [audioOut.ctx] = useState<audioOut.ctx>(() => new audioOut.ctx());
 	const connectionStuff = useRef<ConnectionStuff>({ pushToTalk: settings.pushToTalk, pressingPushToTalk: false, deafened: false, muted: false, deadDeafened: false, livingDeafened: false } as any);
+
 	useEffect(() => {
 		if (connectionStuff.current.gain) {
-			connectionStuff.current.gain.gain.value = settings.microphoneGain;
+			connectionStuff.current.gain.gain.value = settings.inputGain;
 		}
-	}, [ settings.microphoneGain ]);
+	}, [settings.inputGain]);
 
 	useEffect(() => {
 		// Connect to voice relay server
@@ -305,8 +359,10 @@ export default function Voice() {
 			url = new URL(settings.server);
 		} catch (e) {
 			remote.dialog.showErrorBox('Invalid URL', 'Bad voice server url:\n\n' + settings.server);
+
 			return;
 		}
+
 		const socketUri = `${url.protocol === 'https:' ? 'wss' : 'ws'}://${url.host}`;
 		connectionStuff.current.socket = io(socketUri, { transports: ['websocket'] });
 		const { socket } = connectionStuff.current;
@@ -320,7 +376,7 @@ export default function Voice() {
 			setJoinedLobby('MENU');
 			console.log('disconnected');
 		});
-		
+
 		// Initialize variables
 		let audioListener: any;
 		let audio: boolean | MediaTrackConstraints = true;
@@ -337,8 +393,9 @@ export default function Voice() {
 			});
 		}
 
+		let myPlayer = gameState?.players?.find(p => p.isLocal);
 		function checkMicMute(source: number = 0) {
-			if (!myPlayer?.isDead/* || gameState?.gameState !== GameState.DISCUSSION && gameState?.gameState !== GameState.TASKS*/) {
+			if (myPlayer?.isDead/* || gameState?.gameState !== GameState.DISCUSSION && gameState?.gameState !== GameState.TASKS*/) {
 				connectionStuff.current.deadDeafened = false;
 				connectionStuff.current.livingDeafened = false;
 			}
@@ -377,29 +434,23 @@ export default function Voice() {
 
 		const toggleDeafen = () => {
 			connectionStuff.current.deafened = !connectionStuff.current.deafened;
-			checkMicMute(1);
 
-			for (let s of Object.keys(lobbySettings)) {
-				console.log(`lobbySetting curr: ${s} - ${lobbySettings[s]}`);
-			}
+			checkMicMute(1);
 		};
 
 		const toggleMute = () => {
 			connectionStuff.current.muted = !connectionStuff.current.muted;
+
 			checkMicMute(2);
 		};
 		const toggleDeafenDead = () => {
-			if (!myPlayer?.isDead/* || gameState?.gameState !== GameState.DISCUSSION && gameState?.gameState !== GameState.TASKS*/) {
-				return;
-			}
 			connectionStuff.current.deadDeafened = !connectionStuff.current.deadDeafened;
+
 			checkMicMute();
 		};
 		const toggleDeafenLiving = () => {
-			if (!myPlayer?.isDead/* || gameState?.gameState !== GameState.DISCUSSION && gameState?.gameState !== GameState.TASKS*/) {
-				return;
-			}
 			connectionStuff.current.livingDeafened = !connectionStuff.current.livingDeafened;
+
 			checkMicMute();
 		};
 		const pushToTalk = (_: any, pressing: boolean) => {
@@ -407,13 +458,17 @@ export default function Voice() {
 			if (!connectionStuff.current.deafened) {
 				stream.getAudioTracks()[0].enabled = pressing;
 			}*/
+
 			connectionStuff.current.pressingPushToTalk = pressing;
+
 			checkMicMute();
 			// console.log(stream.getAudioTracks()[0].enabled);
 		};
 
 		let playerCount = gameState?.players?.length;
 		const gameStateUpdate = (_: any, newState: AmongUsState) => {
+			myPlayer = newState?.players?.find(p => p.isLocal);
+
 			checkMicMute();
 
 			if (playerCount !== newState.players.length && newState.lobbyCode !== 'MENU') {
@@ -469,18 +524,50 @@ export default function Voice() {
 			const ac = new AudioContext();
 			let peerStream: MediaStream;
 			let streamNode: AudioNode;
-			if (true) { // settings.microphoneGain !== 1
+			if (true) { // settings.inputGain !== 1
 				const gain = ac.createGain();
 				connectionStuff.current.gain = gain;
-				gain.gain.value = settings.microphoneGain;
+
+				gain.gain.value = settings.inputGain;
+
 				const dest = ac.createMediaStreamDestination();
-				ac.createMediaStreamSource(stream).connect(gain).connect(dest);
+				const src = ac.createMediaStreamSource(stream);
+				src.connect(gain).connect(dest);
+
 				peerStream = dest.stream;
 				streamNode = gain;
+
+				/*const processor = ac.createScriptProcessor(2048, 1, 1);
+				processor.connect(ac.destination);
+				src.connect(processor);
+
+				const minUpdateRate = 0;//50;
+        		let lastRefreshTime = 0;
+
+				processor.addEventListener('audioprocess', (event: AudioProcessingEvent) => {
+					// limit update frequency
+					if (event.timeStamp - lastRefreshTime < minUpdateRate) return;
+		
+					// update last refresh time
+					lastRefreshTime = event.timeStamp;
+		
+					const input = event.inputBuffer.getChannelData(0);
+					const total = input.reduce((acc, val) => acc + Math.abs(val), 0);
+					const rms = Math.sqrt(total / input.length);
+					//setRms(rms);
+					//console.log('rms: ' + rms);
+					let g = rms > 0.05 ? settings.inputGain : 0;
+					if(gain.gain.value === 0 || gain.gain.value === 1) {
+						gain.gain.setTargetAtTime(g, ac.currentTime, 0.015);
+					}
+					console.log(gain.gain.value);
+				});*/
+				//VAD.onUpdate
 			} else {
 				peerStream = stream;
 				streamNode = ac.createMediaStreamSource(stream);
 			}
+
 			audioListener = new VAD(ac, streamNode, undefined, {
 				onVoiceStart: () => setTalking(true),
 				onVoiceStop: () => setTalking(false),
@@ -556,8 +643,8 @@ export default function Voice() {
 					/*pan.distanceModel = 'linear'; //exponential
 					//pan.maxDistance = 2.66 * 2;
 					pan.maxDistance = 2.4;*/
-					pan.distanceModel = lobbySettings?.voiceDistanceModel ?? VoiceDistanceModel.Linear === VoiceDistanceModel.Linear ? 'linear' : 'exponential';
-					pan.maxDistance = lobbySettings?.voiceRadius ?? 2.4;
+					pan.distanceModel = lobbySettings.voiceDistanceModel === VoiceDistanceModel.Linear ? 'linear' : 'exponential';
+					pan.maxDistance = lobbySettings.voiceRadius;// * 2;
 					pan.rolloffFactor = 1;
 
 					source.connect(pan);
@@ -574,24 +661,40 @@ export default function Voice() {
 					muffledGain.connect(audioOut.muffled);
 
 					gain.connect(audioOut.dest);
+
 					const vad = new VAD(audioOut.ctx, gain, undefined, {
-						onVoiceStart: () => setTalking(true),
-						onVoiceStop: () => setTalking(false)
+						onVoiceStart: () => setIsTalking(true),
+						onVoiceStop: () => setIsTalkingTimeout(false),
+						//noiseCaptureDuration: 1,
 					});
 
 					camsGain.connect(vad.analyser);
 					muffledGain.connect(vad.analyser);
 
-					const setTalking = (talking: boolean) => {
+					let isTalkingTimeout: any = 0;
+
+					const setIsTalkingTimeout = (talking: boolean) => {
+						if (isTalkingTimeout) clearTimeout(isTalkingTimeout);
+						isTalkingTimeout = setTimeout(() => {
+							setIsTalking(talking);
+						}, 300);
+					};
+
+					const setIsTalking = (talking: boolean) => {
+						if (isTalkingTimeout) clearTimeout(isTalkingTimeout);
+
+						isTalkingTimeout = 0;
+
 						setSocketPlayerIds(socketPlayerIds => {
 							setOtherTalking(old => ({
 								...old,
-								[socketPlayerIds[peer]]: talking && gain.gain.value > 0
+								[socketPlayerIds[peer]]: talking && (gain.gain.value > 0 || muffledGain.gain.value > 0 || camsGain.gain.value > 0 || audioElements.current[peer].gainTarget > 0 || audioElements.current[peer].muffledGainTarget > 0 || audioElements.current[peer].camsGainTarget > 0)
 							}));
 							return socketPlayerIds;
 						});
 					};
-					audioElements.current[peer] = { element: audio, gain, pan, camsGain, muffledGain };
+
+					audioElements.current[peer] = { element: audio, gain, gainTarget: 1, pan, muffledGain, muffledGainTarget: 0, camsGain, camsGainTarget: 0 };
 				});
 				connection.on('signal', (data) => {
 					socket.emit('signal', {
@@ -653,7 +756,7 @@ export default function Voice() {
 				//console.log(`lobbySetting: ${setting} - ${value}`);
 
 				setLobbySettings((old: [ILobbySettings]) => ({ ...old, [setting]: value }));
-				lobbySettings[setting] = value;
+				//lobbySettings[setting] = value;
 
 				//console.log(`lobbySetting set: ${setting} - ${lobbySettings[setting]} ${Object.keys(lobbySettings)}`);
 			});
@@ -664,7 +767,7 @@ export default function Voice() {
 				}*/
 
 				setLobbySettings(settings);
-				lobbySettings = settings;
+				//lobbySettings = settings;
 
 				/*console.log(`lobbySettings set: ${Object.keys(lobbySettings)}`);
 				for (let s of Object.keys(lobbySettings)) {
@@ -688,6 +791,12 @@ export default function Voice() {
 		}
 	}, []);
 
+	useEffect(() => {
+		for (let s of Object.keys(lobbySettings)) {
+			console.log(`lobbySetting: ${s} - ${lobbySettings[s]}`);
+		}
+	}, [lobbySettings]);
+
 	const myPlayer = useMemo(() => {
 		return gameState?.players?.find(p => p.isLocal);
 	}, [gameState]);
@@ -704,10 +813,15 @@ export default function Voice() {
 		for (let player of otherPlayers) {
 			const audio = audioElements.current[playerSocketIds[player.id]];
 			if (audio) {
-				calculateVoiceAudio(gameState, settingsRef.current, myPlayer!, player, audio, lobbySettings);
-				if (connectionStuff.current.deafened || myPlayer?.isDead && (otherDead[player.id] && connectionStuff.current.deadDeafened || !otherDead[player.id] && connectionStuff.current.livingDeafened)) {
-					audio.gain.gain.value = 0;
+				if (connectionStuff.current.deafened || myPlayer!.isDead && (otherDead[player.id] && connectionStuff.current.deadDeafened || !otherDead[player.id] && connectionStuff.current.livingDeafened)) {
+					audio.gain.gain.value = audio.gainTarget = 0;
+					audio.muffledGain.gain.value = audio.muffledGainTarget = 0;
+					audio.camsGain.gain.value = audio.camsGainTarget = 0;
+
+					continue;
 				}
+
+				calculateVoiceAudio(gameState, settingsRef.current, myPlayer!, player, audio, settings.outputGain, lobbySettings);
 			}
 		}
 
@@ -744,13 +858,15 @@ export default function Voice() {
 
 	let overlayMode = settings.overlayMode && gameState.gameState !== undefined && gameState.gameState !== GameState.UNKNOWN && gameState.gameState !== GameState.MENU && otherPlayers.length > 0;
 
-	/*const otherPlayersSorted = JSON.parse(JSON.stringify(otherPlayers));
-	otherPlayersSorted*/otherPlayers.sort((p1: Player, p2: Player) => {
+	//const otherPlayersSorted = JSON.parse(JSON.stringify(otherPlayers));
+	//const otherPlayersSorted = { ...otherPlayers, myPlayer };
+	otherPlayers/*Sorted*/.sort((p1: Player, p2: Player) => {
 		let p1Connected = Object.values(socketPlayerIds).includes(p1.id), p2Connected = Object.values(socketPlayerIds).includes(p2.id);
 		if(!p1Connected || !p2Connected) return p1Connected ? -1 : 1;
 
 		let p1Dead = otherDead[p1.id], p2Dead = otherDead[p2.id]
-		if(p1Dead || p2Dead) return p1Dead && !myPlayer?.isDead ? 1 : -1;
+		//if(p1Dead || p2Dead) return p1Dead && !myPlayer?.isDead ? 1 : -1;
+		if(p1Dead || p2Dead) return p1Dead ? 1 : -1;
 
 		/*if (overlayMode) return 0;
 
@@ -760,13 +876,17 @@ export default function Voice() {
 		return 0;
 	});
 
-	/*if (myPlayer?.id !== undefined) {
+	/*if (myPlayer?.id !== undefined && !otherPlayers[0] && otherPlayers.length == 0) {
 		let test = JSON.parse(JSON.stringify(myPlayer));
-		test.id = "bleh";
+		test.id = 1;
 		test.name = "Talking"
 		otherTalking[test.id] = true;
-		otherPlayersSorted.push(myPlayer, test, myPlayer, myPlayer, test, myPlayer, test, myPlayer, test);
+		//otherPlayers.push(myPlayer, test, myPlayer, myPlayer, test, myPlayer, test, myPlayer, test);
+		otherPlayers.push(myPlayer, test);
+		otherTalking[myPlayer.id] = false;
+		//otherPlayers.push(myPlayer);
 	}*/
+
 
 	return (
 		<div className="root">
@@ -794,6 +914,14 @@ export default function Voice() {
 			<div className="otherplayers-container">
 				<div className="otherplayers">
 					{
+						talking && myPlayer &&
+						<Avatar key={myPlayer.id} player={myPlayer}
+									talking={true}
+									borderColor={'#2ecc71'}
+									isAlive={!myPlayer.isDead}
+									size={40} />
+					}
+					{
 						otherPlayers/*Sorted*/.filter((player: Player) => {
 							return !overlayMode || otherTalking[player.id];
 						}).map((player: Player) => {
@@ -816,13 +944,13 @@ export default function Voice() {
 				overlayMode &&
 				<div className="otherplayers">
 					{
-						otherPlayers/*Sorted*/.filter((player: Player) => {
+						otherPlayers/*Sorted*//*.filter((player: Player) => {
 							return !otherTalking[player.id];
-						}).map((player: Player) => {
+						})*/.map((player: Player) => {
 							let connected = Object.values(socketPlayerIds).includes(player.id);
 							return (
 								<Avatar key={player.id} player={player}
-									talking={!connected || otherTalking[player.id]}
+									talking={!connected/* || otherTalking[player.id]*/}
 									borderColor={connected ? '#2ecc71' : '#c0392b'}
 									isAlive={!otherDead[player.id]}
 									size={40} />

@@ -27,8 +27,7 @@ export const SettingsContext = createContext<[ISettings, React.Dispatch<{
 	type: "set" | "setOne";
 	action: ISettings | [string, any];
 }>]>(null as any);
-//export const LobbySettingsContext = createContext([{}, () => {}] as any);
-export const LobbySettingsContext = createContext<[ILobbySettings, any]>([{}, () => {}] as any);
+export const LobbySettingsContext = createContext<[ILobbySettings, React.Dispatch<ILobbySettings>]>([{}, () => {}] as any);
 
 function App() {
 	const [state, setState] = useState<AppState>(AppState.MENU);
@@ -36,14 +35,28 @@ function App() {
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	//const [lobbySettings] = useState<[ILobbySettings]>({} as [ILobbySettings]);
 	//const lobbySettings = useReducer((state: ILobbySettings): ILobbySettings => state, {});
-	const lobbySettings = useState<ILobbySettings>({test: true} as ILobbySettings);
+	const lobbySettings = useState<ILobbySettings>({
+		version: 1, // Todo: make incompatible server and client versions reject (players on older clients with unimplemented settings may have a completely different experience than intended)
+		impostorVentChat: true,
+		commsSabotageVoice: true,
+		voiceDistanceModel: 0,
+		exponentialGain: 0.8,
+		voiceRadius: 5.32,
+		//voiceMaxDistance: 6,
+		voiceMaxDistance: 3.75,
+		windowObstructedVolume: 0.5,
+		windowObstructedMuffle: true,
+		wallObstructedVolume: 0.2,
+		wallObstructedMuffle: true
+	} as ILobbySettings);
 	const [lobbySettingsOpen, setLobbySettingsOpen] = useState(false);
 	const [errored, setErrored] = useState(false);
 	const settings = useReducer(settingsReducer, {
 		alwaysOnTop: false,
 		microphone: 'Default',
-		microphoneGain: 1,
+		inputGain: 1,
 		speaker: 'Default',
+		outputGain: 1,
 		pushToTalk: false,
 		server: 'https://crewlink.paulf.me',
 		pushToTalkShortcut: 'V',

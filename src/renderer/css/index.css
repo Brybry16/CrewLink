@@ -62,6 +62,10 @@ body {
 	text-align: center;
 	font-size: 20px;
 	user-select: none;
+	text-shadow: -1px 1px 1px #000,
+				  1px 1px 1px #000,
+				 1px -1px 1px #000,
+				-1px -1px 1px #000;
 }
 
 .small-username {
@@ -73,7 +77,8 @@ body {
 				  1px 1px 1px #000,
 				 1px -1px 1px #000,
 				-1px -1px 1px #000;
-	/*background-color: #23272ABB;*/
+	/* background-color: #23272ABB; 
+	border-radius: 4px; */
 	width: 100%;
 	min-width: 80px;
 	max-width: 80px;

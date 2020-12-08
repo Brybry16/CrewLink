@@ -1,5 +1,9 @@
 import { AmongUsState } from '../main/GameReader';
 
+export enum ObstructionType {
+  None, Wall, Window, Door
+}
+
 export default class Ship {
   private points: Float32Array;
   private walls: Uint16Array;
@@ -16,27 +20,34 @@ export default class Ship {
   }
 
   // https://www.geeksforgeeks.org/check-if-two-given-line-segments-intersect/
-  blocked(state: AmongUsState, mx: number, my: number, nx: number, ny: number): number {
+  blocked(state: AmongUsState, mx: number, my: number, nx: number, ny: number) {
     const wall = this.intersects(this.walls, mx, my, nx, ny);
-    if (wall !== 0) {
+    /*if (wall !== 0) {
       return wall;
-    }
-    const window = this.intersects(this.windows, mx, my, nx, ny);
-    if (window !== 0) {
-      return 0.5;
-    }
+    }*/
+    if (wall) return ObstructionType.Wall;
+
     for (let i = 0; i < this.doors.length; i++) {
       if ((state.openDoors & (1 << i)) === 0) {
         const door = this.intersects(this.doors[i], mx, my, nx, ny);
-        if (door !== 0) {
+        /*if (door !== 0) {
           return door;
-        }
+        }*/
+        if (door) return ObstructionType.Door;
       }
     }
-    return 0;
+
+    const window = this.intersects(this.windows, mx, my, nx, ny);
+    /*if (window !== 0) {
+      return 0.5;
+    }*/
+    if (window) return ObstructionType.Window;
+
+    //return 0;
+    return ObstructionType.None;
   }
 
-  private intersects(lines: Uint16Array, mx: number, my: number, nx: number, ny: number): number {
+  private intersects(lines: Uint16Array, mx: number, my: number, nx: number, ny: number) {
     for (const v of lines) {
       const x0 = this.points[v + 0];
       const y0 = this.points[v + 1];
@@ -46,13 +57,18 @@ export default class Ship {
       const o2 = this.orientation(mx, my, nx, ny, x1, y1);
       const o3 = this.orientation(x0, y0, x1, y1, mx, my);
       const o4 = this.orientation(x0, y0, x1, y1, nx, ny);
-      if (o1 != o2 && o3 != o4) return 1;
+
+      //if (o1 != o2 && o3 != o4) return 1;
+      if (o1 != o2 && o3 != o4) return true;
+
       // if (o1 == 0 && this.segment(mx, my, x0, y0, nx, ny)) return 1; 
       // if (o2 == 0 && this.segment(mx, my, x1, y1, nx, ny)) return 1; 
       // if (o3 == 0 && this.segment(x0, y0, mx, my, x1, y1)) return 1; 
       // if (o4 == 0 && this.segment(x0, y0, nx, ny, x1, y1)) return 1; 
     }
-    return 0;
+
+    //return 0;
+    return false;
   }
 
   private orientation(px: number, py: number, qx: number, qy: number, rx: number, ry: number): number {

@@ -136,17 +136,15 @@ ipcMain.on('start', async (event) => {
 
 		// Register key events
 		iohook.on('keydown', (ev: any) => {
-			let shortcutKey = store.get('pushToTalkShortcut');
-			if (keyCodeMatches(shortcutKey as K, ev)) {
+			if (keyCodeMatches(store.get('pushToTalkShortcut', 'V') as K, ev)) {
 				event.reply('pushToTalk', true);
 			}
 		});
 		iohook.on('keyup', (ev: any) => {
-			let shortcutKey = store.get('pushToTalkShortcut');
-			if (keyCodeMatches(shortcutKey as K, ev)) {
+			if (keyCodeMatches(store.get('pushToTalkShortcut', 'V') as K, ev)) {
 				event.reply('pushToTalk', false);
 			}
-			if (keyCodeMatches(store.get('deafenShortcut') as K, ev)) {
+			if (keyCodeMatches(store.get('deafenShortcut', 'RControl') as K, ev)) {
 				event.reply('toggleDeafen');
 			}
 			if (keyCodeMatches(store.get('muteShortcut', 'RAlt') as K, ev)) {

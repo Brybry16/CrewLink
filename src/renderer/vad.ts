@@ -26,7 +26,7 @@ export default class VAD {
 	private activityCounter = 0;
 	private activityCounterMin = 0;
 	private activityCounterMax = 30;
-	private activityCounterThresh = 5;
+	private activityCounterThresh = 3;//0;//5;
 
 	private envFreqRange: number[] = [];
 	private isNoiseCapturing = true;
